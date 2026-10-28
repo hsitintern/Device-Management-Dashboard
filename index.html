@@ -231,17 +231,17 @@ h1 { font-size: 24px; font-weight: 600; letter-spacing: -.01em; outline: 0; }
 
 .clip { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 
-/* ---------- sign-in screen (live mode) ---------- */
-.auth-screen { position: fixed; inset: 0; z-index: 500; background: var(--bg); display: grid; place-items: center; padding: 20px; }
-.auth-screen[hidden] { display: none; }
-body.auth-open { overflow: hidden; }
-.auth-card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 48px rgba(24, 33, 43, .12); padding: 30px 28px 24px; text-align: center; }
-.auth-card h1 { font-size: 22px; margin: 12px 0 6px; }
-.auth-msg { color: var(--ink-2); margin-bottom: 4px; }
-.auth-msg.error { color: var(--amber); } .auth-msg.denied { color: var(--red); font-weight: 500; } .auth-msg.setup { color: var(--red); text-align: left; }
-#g-btn { display: flex; justify-content: center; margin: 18px 0 8px; min-height: 44px; }
-.auth-foot { font-size: 12px; color: var(--muted); margin-top: 14px; }
-
+/* ---------- public (read-only) view and bulk upload ---------- */
+.btn[hidden] { display: none !important; }
+a.btn { text-decoration: none; }
+@media (max-width: 640px) { body.is-live #mode-pill, body.is-live .profile-text { display: none; } body.is-live .search-wrap { flex: 1 1 40px; min-width: 0; width: auto; } body.is-live .topbar { gap: 8px; padding: 0 12px; } body.is-live .topbar .spacer { display: none; } body.is-live .topbar .btn { flex: none; white-space: nowrap; } }
+body.is-public :is([data-action="add-device"], [data-action="edit-device"], [data-action="allot-device"], [data-action="add-employee"], [data-action="edit-employee"], [data-action="allot"], [data-action="mark-returned"], [data-action="remove-option"], form.add-option, .chip-x) { display: none !important; }
+.bulk-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; min-width: 220px; }
+.bulk-err { color: #7e2520; } .bulk-chg { color: var(--ink-2); }
+.bulk-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 4px 0; cursor: pointer; }
+.bulk-check input { margin-top: 3px; }
+#bulk-file, [data-bulk="file"] { max-width: 100%; }
+details.card > summary { list-style: none; } details.card > summary::-webkit-details-marker { display: none; }
 </style>
 </head>
 <body>
@@ -269,8 +269,9 @@ body.auth-open { overflow: hidden; }
         </div>
         <span class="spacer"></span>
         <span class="demo-pill" id="mode-pill" title="Sample data only. Not connected to any database.">DEMO MODE</span>
+        <a class="btn btn-primary btn-sm" id="login-btn" href="admin-login.html" hidden>Administrator login</a>
         <button class="btn btn-quiet btn-sm" type="button" id="signout-btn" data-action="sign-out" hidden>Sign out</button>
-        <div class="profile"><span class="avatar" id="avatar" aria-hidden="true">DA</span><span class="profile-text"><strong id="profile-name">Demo Admin</strong><small>Administrator</small></span></div>
+        <div class="profile"><span class="avatar" id="avatar" aria-hidden="true">DA</span><span class="profile-text"><strong id="profile-name">Demo Admin</strong><small id="profile-role">Administrator</small></span></div>
       </header>
 
       <main class="page">
@@ -287,22 +288,11 @@ body.auth-open { overflow: hidden; }
     </div>
   </div>
 
-  <div id="auth-screen" class="auth-screen" hidden>
-    <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-      <span class="brand-mark" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
-      <h1 id="auth-title">Device Desk</h1>
-      <p id="auth-msg" class="auth-msg" role="status"></p>
-      <div id="g-btn"></div>
-      <p class="auth-foot">Access is limited to authorised administrators. Employee and device records are only sent after sign-in.</p>
-    </div>
-  </div>
-
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="modal-root"></div>
 
   <script src="config.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
 /* ===== utils.js ===== */
 /* utils.js — small, dependency-free helpers (dates, escaping, CSV, cloning). */
@@ -1171,140 +1161,50 @@ body.auth-open { overflow: hidden; }
 </script>
   <script>
 /* ===== auth.js ===== */
-/* auth.js — "Sign in with Google" for the GitHub Pages version.
- *
- * The browser gets a short-lived Google ID token and sends it with every request. The Apps Script backend
- * verifies it with Google and checks the email against the administrator list. Nothing here is a security
- * boundary by itself: hiding the screen does not protect data, the SERVER refuses requests without a valid
- * administrator token. The token is kept in memory only (never in localStorage or in the page address).
- */
+/* auth.js — the administrator session kept in this browser tab.
+ * Sign-in happens on admin-login.html (username + password). The server answers with a random session token,
+ * which is kept ONLY in sessionStorage (it disappears when the tab is closed). No password, password hash or
+ * private key is ever stored here, and nothing in this file grants access: the server checks the token on every
+ * request. Viewing the dashboard needs no sign-in at all. */
 (function (g) {
   'use strict';
-
   const CFG = g.EDM_CONFIG || {};
-  const SKEW_SECONDS = 90;          // renew the token a little before it expires
-  const REFRESH_WAIT_MS = 6000;     // how long to wait for a silent renewal before asking the person to sign in again
-  const GSI_WAIT_MS = 10000;
+  const KEY = 'edm-admin-session';
+  let sess = null;
 
-  let token = null, expiresAt = 0, shownEmail = '';
-  let initialised = false, buttonDrawn = false;
-  let waiters = [];                 // functions waiting for the next credential
-  const listeners = [];
-
-  const $ = function (id) { return document.getElementById(id); };
-
-  function decodePayload(jwt) { // for DISPLAY and expiry only; the server never trusts this
+  function load() {
     try {
-      const b = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      const json = decodeURIComponent(atob(b).split('').map(function (c) { return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join(''));
-      return JSON.parse(json);
-    } catch (e) { return null; }
+      const raw = g.sessionStorage && g.sessionStorage.getItem(KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (s && typeof s.token === 'string' && /^[0-9a-f]{64}$/.test(s.token)) sess = s;
+    } catch (e) { sess = null; }
   }
-
-  function onCredential(resp) {
-    if (!resp || !resp.credential) return;
-    const p = decodePayload(resp.credential);
-    if (!p || !p.exp) return;
-    token = resp.credential; expiresAt = Number(p.exp) * 1000; shownEmail = p.email || '';
-    const w = waiters; waiters = [];
-    w.forEach(function (fn) { fn(token); });
-    listeners.forEach(function (fn) { try { fn(shownEmail); } catch (e) { /* ignore */ } });
+  function save() {
+    try {
+      if (!g.sessionStorage) return;
+      if (sess) g.sessionStorage.setItem(KEY, JSON.stringify(sess)); else g.sessionStorage.removeItem(KEY);
+    } catch (e) { /* ignore */ }
   }
-
-  function waitForGoogle() {
-    return new Promise(function (resolve, reject) {
-      const started = Date.now();
-      (function poll() {
-        if (g.google && g.google.accounts && g.google.accounts.id) return resolve();
-        if (Date.now() - started > GSI_WAIT_MS) return reject(new Error('Google sign-in could not be loaded. Check your internet connection and any ad or content blocker, then reload the page.'));
-        setTimeout(poll, 100);
-      })();
-    });
-  }
-
-  async function ensureInitialised() {
-    if (initialised) return;
-    await waitForGoogle();
-    g.google.accounts.id.initialize({ client_id: CFG.GOOGLE_CLIENT_ID, callback: onCredential, auto_select: true, cancel_on_tap_outside: false, itp_support: true });
-    initialised = true;
-  }
-
-  function drawButton() {
-    const holder = $('g-btn');
-    if (!holder || !initialised) return;
-    holder.innerHTML = '';
-    g.google.accounts.id.renderButton(holder, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 260 });
-    buttonDrawn = true;
-  }
+  load();
 
   const Auth = {
-    isConfigured: function () { return !!(CFG.WEB_APP_URL && CFG.GOOGLE_CLIENT_ID && /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(CFG.WEB_APP_URL)); },
-    email: function () { return shownEmail; },
-    hasValidToken: function () { return !!token && expiresAt - SKEW_SECONDS * 1000 > Date.now(); },
-    onSignIn: function (fn) { listeners.push(fn); },
-
-    /** Shows the full-screen sign-in card. kind: '' | 'error' | 'denied' | 'setup' */
-    showScreen: function (message, kind) {
-      const s = $('auth-screen'); if (!s) return;
-      s.hidden = false; document.body.classList.add('auth-open');
-      const m = $('auth-msg'); m.textContent = message; m.className = 'auth-msg' + (kind ? ' ' + kind : '');
-      $('g-btn').hidden = kind === 'setup';
-      if (kind !== 'setup' && initialised) drawButton();
+    loginUrl: 'admin-login.html',
+    isConfigured: function () { return !!(CFG.WEB_APP_URL && /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(CFG.WEB_APP_URL)); },
+    isAdmin: function () { return !!sess; },
+    token: function () { return sess ? sess.token : null; },
+    user: function () { return sess ? { username: sess.username, name: sess.name || sess.username } : null; },
+    /** Called after every successful request, so the inactivity clock matches the server's. */
+    touch: function () { if (sess) { sess.last = Date.now(); save(); } },
+    /** True when the idle or the total session time (as announced by the server at sign-in) has run out. */
+    clockExpired: function () {
+      if (!sess) return false;
+      const now = Date.now();
+      return now - (sess.last || sess.started || now) > (sess.idle || 7200) * 1000 || now - (sess.started || now) > (sess.max || 21600) * 1000;
     },
-    hideScreen: function () { const s = $('auth-screen'); if (s) s.hidden = true; document.body.classList.remove('auth-open'); },
-
-    /** Prepares Google sign-in and draws the button. Resolves when the button is ready. */
-    prepare: async function () {
-      if (!Auth.isConfigured()) {
-        Auth.showScreen('Setup needed: open config.js and set WEB_APP_URL (your Apps Script address ending in /exec) and GOOGLE_CLIENT_ID. See the setup guide.', 'setup');
-        throw new Error('not configured');
-      }
-      try { await ensureInitialised(); }
-      catch (e) { Auth.showScreen(e.message, 'error'); throw e; }
-      drawButton();
-    },
-
-    /** Resolves with a token as soon as the person has signed in. */
-    waitForCredential: function () {
-      if (Auth.hasValidToken()) return Promise.resolve(token);
-      if (initialised) { try { g.google.accounts.id.prompt(); } catch (e) { /* the button still works */ } }
-      return new Promise(function (resolve) { waiters.push(resolve); });
-    },
-
-    /** A token that is valid right now. Tries a silent renewal first, then asks the person to sign in again. */
-    getToken: async function () {
-      if (Auth.hasValidToken()) return token;
-      if (!initialised) throw sessionError_('Sign in with Google to continue.');
-      const renewed = await new Promise(function (resolve) {
-        const timer = setTimeout(function () { waiters = waiters.filter(function (w) { return w !== done; }); resolve(null); }, REFRESH_WAIT_MS);
-        function done(t) { clearTimeout(timer); resolve(t); }
-        waiters.push(done);
-        try { g.google.accounts.id.prompt(); } catch (e) { /* fall through to the timeout */ }
-      });
-      if (renewed) return renewed;
-      Auth.showScreen('Your session expired. Sign in again to continue.', 'error');
-      throw sessionError_('Your session expired. Sign in again, then repeat the action.');
-    },
-
-    /** Forget the current token (used after the server says it is not valid / not authorised). */
-    forget: function () { token = null; expiresAt = 0; shownEmail = ''; },
-
-    /** The server refused this account: stop auto-selecting it and let the person choose another. */
-    denied: function (message) {
-      Auth.forget();
-      try { g.google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ }
-      Auth.showScreen(message, 'denied');
-    },
-
-    signOut: function () {
-      Auth.forget();
-      try { g.google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ }
-      Auth.showScreen('You have signed out. Sign in with your administrator Google account to open the dashboard.');
-    }
+    setToken: function (t) { if (sess && /^[0-9a-f]{64}$/.test(t)) { sess.token = t; sess.last = Date.now(); save(); } },
+    clear: function () { sess = null; save(); }
   };
-
-  function sessionError_(msg) { const e = new Error(msg); e.code = 'SESSION_EXPIRED'; e.authError = true; return e; }
-
   g.Auth = Auth;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -1314,9 +1214,9 @@ body.auth-open { overflow: hidden; }
 /* dataService.js — the ONLY layer the UI uses to read or change data.
  *
  * Two modes, chosen automatically:
- *  - SHEETS: config.js is present (the GitHub Pages / production setup). Every read and write is a signed
- *            request to the Apps Script web app, which verifies the administrator and reads/writes the Google Sheet.
- *            There is NO demo data and NO browser storage of records in this mode.
+ *  - SHEETS: config.js is present (the GitHub Pages / production setup). Anyone can read the reduced public data;
+ *            every change is a request carrying an administrator session token, which the Apps Script web app verifies
+ *            before it reads/writes the Google Sheet. There is NO demo data and NO browser storage of records in this mode.
  *  - DEMO:   no config.js (a local file or preview). Sample data in browser memory/localStorage, never shared.
  *
  * The public functions, their arguments and their results are identical in both modes,
@@ -1334,9 +1234,9 @@ body.auth-open { overflow: hidden; }
   const today = function () { return Dates.today(); };
 
   /* ================================================================== SHEETS MODE */
-  const AUTH_RETRY_CODES = ['TOKEN_EXPIRED', 'INVALID_TOKEN', 'SIGN_IN_REQUIRED'];
+  const SESSION_CODES = ['SIGN_IN_REQUIRED', 'SESSION_EXPIRED'];
 
-  /** One signed request to the Apps Script web app. Sent as text/plain so the browser allows it cross-origin. */
+  /** One request to the Apps Script web app. Sent as text/plain so the browser allows it cross-origin. */
   async function post(method, args, token) {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, REMOTE_TIMEOUT_MS);
@@ -1360,32 +1260,28 @@ body.auth-open { overflow: hidden; }
     return body;
   }
 
-  async function remote(method, args) {
-    if (!g.Auth || !g.Auth.isConfigured()) throw new Error('The dashboard is not configured. Set WEB_APP_URL and GOOGLE_CLIENT_ID in config.js.');
-    let body = await post(method, args, await g.Auth.getToken());
-    // An expired/invalid token is refused BEFORE anything is processed, so renewing it and retrying once is safe.
-    if (body && !body.ok && body.error && body.error.name === 'AuthError' && AUTH_RETRY_CODES.indexOf(body.error.code) !== -1) {
-      g.Auth.forget();
-      body = await post(method, args, await g.Auth.getToken());
-    }
-    if (body && body.ok) return body.data;
+  /** publicCall = true sends no session token (the public read-only view). Everything else is an administrator request. */
+  async function remote(method, args, publicCall) {
+    if (!g.Auth || !g.Auth.isConfigured()) throw new Error('The dashboard is not configured. Set WEB_APP_URL in config.js.');
+    const body = await post(method, args, publicCall ? undefined : g.Auth.token());
+    if (body && body.ok) { if (!publicCall) g.Auth.touch(); return body.data; }
     const er = (body && body.error) || {};
     if (er.name === 'RuleError') throw new Rules.RuleError(er.message, er.fields);
     if (er.name === 'AuthError') {
       const e = new Error(er.message); e.authError = true; e.code = er.code;
-      if (er.code === 'NOT_AUTHORIZED') g.Auth.denied(er.message);
-      else if (er.code === 'NOT_CONFIGURED') g.Auth.showScreen(er.message, 'setup');
-      else g.Auth.showScreen(er.message, 'error');
+      if (!publicCall && SESSION_CODES.indexOf(er.code) !== -1 && g.App && g.App.sessionEnded) g.App.sessionEnded(er.message);
       throw e;
     }
     throw new Error(er.message || 'The request failed.');
   }
 
+  /** Administrators load the full data; everyone else loads the reduced, read-only public copy. */
   let snap = null, snapAt = 0, inflight = null;
   function liveSnapshot() {
     if (snap && Date.now() - snapAt < SNAPSHOT_REUSE_MS) return Promise.resolve(snap);
     if (inflight) return inflight;
-    inflight = remote('loadAll').then(function (d) { snap = d.snapshot; snapAt = Date.now(); inflight = null; return snap; }, function (e) { inflight = null; throw e; });
+    const admin = g.Auth.isAdmin();
+    inflight = remote(admin ? 'loadAll' : 'publicLoad', [], !admin).then(function (d) { snap = d.snapshot; snapAt = Date.now(); inflight = null; return snap; }, function (e) { inflight = null; throw e; });
     return inflight;
   }
 
@@ -1420,6 +1316,7 @@ body.auth-open { overflow: hidden; }
   /** Writes run as ONE all-or-nothing operation (live: on the server under a lock, demo: on a copy). */
   function write(name, args) {
     if (LIVE) {
+      if (!g.Auth.isAdmin()) return Promise.reject(new Error('Administrator sign-in is required to change data.'));
       return remote(name, args).then(function (d) { snap = d.snapshot; snapAt = Date.now(); return d.result; });
     }
     return demoCall(function () {
@@ -1436,9 +1333,21 @@ body.auth-open { overflow: hidden; }
     isLive: function () { return LIVE; },
     isPersistent: function () { return LIVE ? true : persistent; },
     today: today,
-    getUser: function () { return LIVE ? remote('whoami').then(function (d) { return { email: d.email, name: d.email }; }) : Promise.resolve({ email: 'demo', name: 'Demo Admin' }); },
+    getUser: function () { return LIVE ? remote('whoami').then(function (d) { return { email: d.username, name: d.name }; }) : Promise.resolve({ email: 'demo', name: 'Demo Admin' }); },
+    /** Ends the session on the server (the browser forgets it separately). */
+    logout: function () { return LIVE ? remote('logout') : Promise.resolve(); },
     /** Forget cached records (used when signing out). */
     clearCache: function () { snap = null; snapAt = 0; inflight = null; },
+
+    /* ---------- administrator-only (live mode): bulk upload and account management ---------- */
+    bulkInfo: function () { return remote('bulkInfo'); },
+    bulkPreview: function (category, mode, headers, rows) { return remote('bulkPreview', [category, mode, headers, rows]); },
+    bulkImport: function (category, mode, headers, rows, opts) { return remote('bulkImport', [category, mode, headers, rows, opts]).then(function (d) { snap = d.snapshot; snapAt = Date.now(); return d.result; }); },
+    adminList: function () { return remote('adminList'); },
+    adminApprove: function (u) { return remote('adminApprove', [u]); },
+    adminReject: function (u) { return remote('adminReject', [u]); },
+    adminSetActive: function (u, on) { return remote('adminSetActive', [u, on === true]); },
+    changePassword: function (o) { return remote('changePassword', [o]).then(function (d) { g.Auth.setToken(d.token); return true; }); },
 
     /* ---------- reads ---------- */
     getDashboardData: function () { return read(function (s) { return Rules.dashboard(s, today()); }); },
@@ -1629,6 +1538,8 @@ body.auth-open { overflow: hidden; }
     alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
     lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     up: '<path d="m18 15-6-6-6 6"/>',
     down: '<path d="m6 9 6 6 6-6"/>',
@@ -2565,13 +2476,18 @@ body.auth-open { overflow: hidden; }
   const ROUTES = [
     { key: 'overview', label: 'Overview', icon: 'grid' }, { key: 'employees', label: 'Employees', icon: 'users' }, { key: 'inventory', label: 'Device Inventory', icon: 'laptop' },
     { key: 'allotment', label: 'Device Allotment', icon: 'swap' }, { key: 'returns', label: 'Returns', icon: 'undo' },
-    { key: 'reports', label: 'Reports & Analytics', icon: 'chart' }, { key: 'settings', label: 'Settings', icon: 'sliders' }
+    { key: 'reports', label: 'Reports & Analytics', icon: 'chart' }, { key: 'settings', label: 'Settings', icon: 'sliders' },
+    { key: 'bulk', label: 'Bulk Upload', icon: 'upload', adminOnly: true }, { key: 'admins', label: 'Administrators', icon: 'shield', adminOnly: true }
   ];
+  /** Demo mode is always "administrator"; in live mode only a signed-in administrator can change data. The SERVER enforces this too. */
+  const isAdmin = function () { return !DataService.isLive() || Auth.isAdmin(); };
+  const routeVisible = function (r) { return !r.adminOnly || (DataService.isLive() && Auth.isAdmin()); };
+  const WRITE_ACTIONS = ['add-device', 'edit-device', 'allot-device', 'add-employee', 'edit-employee', 'allot', 'mark-returned', 'remove-option'];
 
   const App = { data: null, dash: null, filters: {}, route: 'overview', report: null, _token: 0, ready: false };
 
   /* -------------------------------------------------------------------- router */
-  const routeFromHash = function () { const m = (location.hash || '').match(/^#\/([a-z]+)/); return m && Pages[m[1]] ? m[1] : 'overview'; };
+  const routeFromHash = function () { const m = (location.hash || '').match(/^#\/([a-z]+)/); const r = m && ROUTES.filter(function (x) { return x.key === m[1]; })[0]; return m && Pages[m[1]] && r && routeVisible(r) ? m[1] : 'overview'; };
 
   App.go = function (key, preset) {
     if (!Pages[key]) return;
@@ -2623,7 +2539,7 @@ body.auth-open { overflow: hidden; }
   /* ------------------------------------------------------------------- sidebar */
   function closeMobileNav() { document.body.classList.remove('nav-open'); }
   function buildNav() {
-    $('nav').innerHTML = ROUTES.map(function (r) { return '<a class="nav-link" href="#/' + r.key + '" data-route="' + r.key + '" title="' + E(r.label) + '">' + I(r.icon, 19) + '<span>' + E(r.label) + '</span></a>'; }).join('');
+    $('nav').innerHTML = ROUTES.filter(routeVisible).map(function (r) { return '<a class="nav-link" href="#/' + r.key + '" data-route="' + r.key + '" title="' + E(r.label) + '">' + I(r.icon, 19) + '<span>' + E(r.label) + '</span></a>'; }).join('');
     try { if (localStorage.getItem('edm-sidebar') === 'collapsed') document.body.classList.add('sidebar-collapsed'); } catch (e) { /* ignore */ }
   }
   function toggleSidebar() {
@@ -2761,7 +2677,11 @@ body.auth-open { overflow: hidden; }
       if (a) {
         if (a.hasAttribute('data-close-search')) { $('search-results').hidden = true; searchInput().value = ''; }
         const fn = Actions[a.dataset.action];
-        if (fn) { ev.preventDefault(); fn(a, ev); }
+        if (fn) {
+          ev.preventDefault();
+          if (WRITE_ACTIONS.indexOf(a.dataset.action) !== -1 && !isAdmin()) { UI.toast('Administrator sign-in is required to make changes. Use "Administrator login".', 'info', 'View only'); return; }
+          fn(a, ev);
+        }
         return;
       }
       if (!ev.target.closest('.search-wrap')) $('search-results').hidden = true;
@@ -2781,6 +2701,7 @@ body.auth-open { overflow: hidden; }
       const f = ev.target.closest('form.add-option');
       if (!f) return;
       ev.preventDefault();
+      if (!isAdmin()) { UI.toast('Administrator sign-in is required to make changes.', 'info', 'View only'); return; }
       const list = f.dataset.list, input = f.querySelector('input');
       try { await DataService.addListValue(list, input.value); await App.afterChange('“' + input.value.trim() + '” added to ' + list + '.'); }
       catch (err) { UI.toast(err.message, 'error', 'Not added'); input.focus(); }
@@ -2797,51 +2718,77 @@ body.auth-open { overflow: hidden; }
     window.addEventListener('resize', debounce(function () { if (!window.matchMedia('(max-width: 900px)').matches) closeMobileNav(); }, 150));
   }
 
-  /* ----------------------------------------------------------- Google sign-in (SHEETS mode) */
-  function showSignedIn(user) {
-    App.user = user;
-    $('profile-name').textContent = user.email;
-    $('avatar').textContent = (user.email || '?').slice(0, 2).toUpperCase();
-    $('signout-btn').hidden = false;
+  /* ----------------------------------------------------------- roles: public viewer / administrator */
+  function initials(s) { return String(s || '?').replace(/[^A-Za-z0-9 ]/g, '').trim().split(/\s+/).map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase() || '?'; }
+
+  /** Updates the header, the sidebar and the page styling to match who is looking at the dashboard. */
+  function applyRole() {
+    const live = DataService.isLive(), admin = isAdmin();
+    document.body.classList.toggle('is-public', live && !admin);
+    document.body.classList.toggle('is-live', live);
+    buildNav();
+    if (!live) return;
+    const pill = $('mode-pill'), u = Auth.user();
+    pill.classList.add('live-pill');
+    pill.textContent = admin ? 'LIVE · GOOGLE SHEETS' : 'PUBLIC VIEW · READ-ONLY';
+    pill.title = admin ? 'Connected to your Google Sheet. Changes are saved to the spreadsheet.' : 'You are viewing the public, read-only dashboard. Administrators sign in to make changes.';
+    $('login-btn').hidden = admin; $('signout-btn').hidden = !admin;
+    $('profile-name').textContent = admin ? u.name : 'Public viewer';
+    $('profile-role').textContent = admin ? 'Administrator' : 'View only';
+    $('avatar').textContent = admin ? initials(u.name) : 'PV';
+    $('storage-note').textContent = admin ? 'Connected to Google Sheets.' : 'Read-only view. Sign in as an administrator to make changes.';
   }
 
-  /** Blocks the dashboard until Google sign-in succeeds AND the server confirms this account is an administrator. */
-  async function signInFlow() {
-    Auth.showScreen('Sign in with your administrator Google account to open the dashboard.');
-    try { await Auth.prepare(); } catch (e) { return; } // the screen already explains what is wrong
-    for (;;) {
-      await Auth.waitForCredential();
-      try {
-        const user = await DataService.getUser();   // the SERVER verifies the token and the administrator list
-        showSignedIn(user); Auth.hideScreen(); App.ready = true;
-        App.render({ focus: false });
-        return;
-      } catch (err) {
-        if (!err.authError) { Auth.forget(); Auth.showScreen(err.message, 'error'); }
-        // authError: Auth already forgot the token and is showing why; wait for the next sign-in
+  /** Called when the server says the session is over (expired, signed out elsewhere, account disabled). */
+  App.sessionEnded = function (msg) {
+    if (!DataService.isLive() || !Auth.isAdmin()) return;
+    Auth.clear(); DataService.clearCache(); UI.closeAllModals(); applyRole();
+    if (/^#\/(bulk|admins)/.test(location.hash)) location.hash = '#/overview';
+    UI.toast((msg || 'Your session has ended.') + ' You are now in the read-only public view. Use "Administrator login" to sign in again.', 'error', 'Signed out');
+    setTimeout(function () { App.render({ silent: true }); }, 0);
+  };
+
+  async function signOut() {
+    try { await DataService.logout(); } catch (e) { /* the session ends in this browser either way */ }
+    Auth.clear(); DataService.clearCache(); UI.closeAllModals(); applyRole();
+    if (/^#\/(bulk|admins)/.test(location.hash)) location.hash = '#/overview';
+    UI.toast('You have signed out. You can still view the dashboard.', 'success', 'Signed out');
+    App.render({ silent: true });
+  }
+
+  /** In public view, any write control that is somehow drawn (a dialog footer, for example) is removed. */
+  function watchPublicDialogs() {
+    const root = $('modal-root');
+    if (!root || typeof MutationObserver === 'undefined') return;
+    new MutationObserver(function () {
+      if (!document.body.classList.contains('is-public')) return;
+      root.querySelectorAll('[data-edit],[data-allot],[data-act],[data-action="mark-returned"],[data-action="add-device"],[data-action="add-employee"],[data-action="allot"]').forEach(function (el) { el.remove(); });
+    }).observe(root, { childList: true, subtree: true });
+  }
+
+  async function initLive() {
+    $('content').innerHTML = '';
+    watchPublicDialogs();
+    let notice = '';
+    if (Auth.isAdmin()) {
+      if (Auth.clockExpired()) { Auth.clear(); notice = 'Your administrator session expired.'; }
+      else {
+        try { await DataService.getUser(); }                       // the SERVER confirms the session is still valid
+        catch (err) { if (err.authError) notice = ''; /* sessionEnded already explained it */ }
       }
     }
-  }
-
-  function signOut() {
-    App.ready = false; App.data = null; App.dash = null; App.report = null; App.user = null; App._token++;
-    DataService.clearCache(); UI.closeAllModals();
-    $('content').innerHTML = ''; $('signout-btn').hidden = true; $('profile-name').textContent = 'Not signed in'; $('avatar').textContent = '--';
-    Auth.signOut();
-    signInFlow();
+    applyRole();
+    if (notice) UI.toast(notice + ' You are viewing the read-only public dashboard.', 'info', 'Signed out');
+    App.ready = true;
+    App.render({ focus: false });
+    setInterval(function () { if (Auth.isAdmin() && Auth.clockExpired()) App.sessionEnded('You were signed out after a period of inactivity.'); }, 30000);
   }
 
   function init() {
     buildNav();
     bindEvents();
     if (DataService.isLive()) {
-      const pill = $('mode-pill');
-      pill.textContent = 'LIVE · GOOGLE SHEETS'; pill.classList.add('live-pill'); pill.title = 'Connected to your Google Sheet. Changes are saved to the spreadsheet.';
-      $('storage-note').textContent = 'Connected to Google Sheets.';
-      $('content').innerHTML = '';
-      // After a session expires and the person signs in again, refresh the page they were on.
-      Auth.onSignIn(function () { if (App.ready) { Auth.hideScreen(); App.render({ silent: true }); } });
-      signInFlow();
+      initLive();
     } else {
       $('storage-note').textContent = DataService.isPersistent() ? 'Changes are saved in this browser only.' : 'Changes last until you refresh this page.';
       App.ready = true;
@@ -2849,8 +2796,342 @@ body.auth-open { overflow: hidden; }
     }
   }
 
+  App.actions = Actions;
   g.App = App;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/* ===== bulk.js ===== */
+/* bulk.js — administrator-only pages: Bulk Upload (CSV) and Administrators (approve requests, enable/disable, change password).
+ * These pages are only offered to a signed-in administrator, and every action they take is checked again on the server.
+ * The browser reads the CSV file and does quick checks; the SERVER validates every row and writes nothing until you confirm. */
+(function (g) {
+  'use strict';
+  const E = esc, I = UI.icon, B = UI.badge;
+  const Pages = g.Pages, App = g.App;
+  const MAX_FILE_BYTES = 500 * 1024;
+
+  /* ------------------------------------------------------------------ CSV reading */
+  /** Reads CSV text (quotes, doubled quotes, commas and line breaks inside quotes, CRLF or LF, optional BOM). Blank lines are skipped. */
+  function parseCSV(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = [], cur = '', inQ = false, i = 0;
+    const endRow = function () { row.push(cur); cur = ''; if (row.some(function (v) { return String(v).trim() !== ''; })) rows.push(row); row = []; };
+    for (; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += c;
+      } else if (c === '"' && cur === '') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\r') { endRow(); if (text[i + 1] === '\n') i++; }
+      else if (c === '\n') endRow();
+      else cur += c;
+    }
+    if (inQ) throw new Error('The file has a quotation mark that is never closed. Check the CSV in a spreadsheet program and save it again.');
+    if (cur !== '' || row.length) endRow();
+    return rows;
+  }
+
+  /* ------------------------------------------------------------------ state */
+  const Bulk = { info: null, category: 'employees', mode: 'insert', strict: true, confirmUpdate: false, onlyErrors: false, fileName: '', headers: [], rows: [], clientErrors: {}, fileErrors: [], preview: null, result: null, busy: false, error: '' };
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const LIST_FOR = { Employment_Status: 'Employment Statuses', Device_Type: 'Device Types', Device_Ownership_Type: 'Ownership Types', Device_Condition: 'Device Conditions', Condition_At_Issue: 'Device Conditions', Condition_At_Return: 'Device Conditions', Current_Status: 'Device Statuses', Department: 'Departments', Designation: 'Designations', Brand: 'Brands' };
+  const ID_NOTE = { Employee_ID: 'Your own employee ID. Must be new (not already used).', Device_ID: 'Leave empty to create DEV-0001 style IDs automatically.', Assignment_ID: 'Leave empty to create ASG-0001 style IDs automatically.', Return_ID: 'Leave empty to create RET-0001 style IDs automatically.' };
+
+  function resetFile() { Bulk.fileName = ''; Bulk.headers = []; Bulk.rows = []; Bulk.clientErrors = {}; Bulk.fileErrors = []; Bulk.preview = null; Bulk.error = ''; Bulk.confirmUpdate = false; }
+  const cat = function () { return Bulk.info.categories[Bulk.category]; };
+  const rerender = function () { if (document.getElementById('bulk-root')) drawBulk(); };
+
+  /* ------------------------------------------------------------------ guide + template */
+  function columnNotes(h) {
+    const c = cat(), parts = [];
+    if (ID_NOTE[h] && h === c.idField) parts.push(ID_NOTE[h]);
+    if (Bulk.category === 'returns' && (h === 'Device_ID' || h === 'Employee_ID')) parts.push('Optional. If filled, it must match the assignment.');
+    if (c.dateColumns.indexOf(h) !== -1) parts.push('Date as YYYY-MM-DD, for example 2026-03-31.');
+    const ln = LIST_FOR[h];
+    if (ln && App.data && App.data.lists[ln] && !(Bulk.category === 'devices' && h === 'Current_Status' && Bulk.mode !== 'update' && false)) {
+      if (['Department', 'Designation', 'Brand'].indexOf(h) === -1) parts.push('One of: ' + App.data.lists[ln].join(', ') + '.');
+    }
+    if (h === 'Last_Working_Date') parts.push('Required when the status is Notice Period or Exited.');
+    if (h === 'Rental_Vendor') parts.push('Required when ownership is Rented.');
+    if (h === 'Current_Status' && Bulk.category === 'devices') parts.push('New devices cannot start as Assigned. Use the allotment upload for that.');
+    if (h === 'Condition_At_Return') parts.push('Damaged devices go to Under Repair; New/Good become Available; Fair becomes Available.');
+    if (h === 'Missing_Items') parts.push('Free text. For a lost device use "Resolve as lost" in the dashboard.');
+    return parts.join(' ');
+  }
+  function downloadTemplate() {
+    const c = cat();
+    const text = toCSV(c.headers.map(function (h) { return { key: h, label: h }; }), []);
+    saveBlob('\ufeff' + text + '\r\n', 'template-' + Bulk.category + '.csv');
+  }
+  function saveBlob(text, name) {
+    try {
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8' }), url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+      UI.toast(name + ' downloaded.', 'success', 'Downloaded');
+    } catch (err) { UI.toast('The file could not be created.', 'error', 'Download failed'); }
+  }
+
+  /* ------------------------------------------------------------------ reading a chosen file */
+  async function onFile(file) {
+    resetFile();
+    if (!file) { rerender(); return; }
+    Bulk.fileName = file.name;
+    if (!/\.csv$/i.test(file.name)) Bulk.fileErrors.push('This does not look like a .csv file. Save your spreadsheet as "CSV (comma delimited)" and try again.');
+    if (file.size > MAX_FILE_BYTES) Bulk.fileErrors.push('The file is ' + Math.round(file.size / 1024) + ' KB. The limit is ' + (MAX_FILE_BYTES / 1024) + ' KB. Split it into smaller files.');
+    if (Bulk.fileErrors.length) { rerender(); return; }
+    let table;
+    try { table = parseCSV(await file.text()); } catch (err) { Bulk.fileErrors.push(err.message); rerender(); return; }
+    if (!table.length) { Bulk.fileErrors.push('The file is empty.'); rerender(); return; }
+    const c = cat(), headers = table[0].map(function (h) { return String(h).trim(); });
+    const seen = {};
+    headers.forEach(function (h) {
+      if (c.headers.indexOf(h) === -1) Bulk.fileErrors.push('Unknown column "' + h + '". Use the downloaded template; column names must match exactly.');
+      if (seen[h]) Bulk.fileErrors.push('The column "' + h + '" appears more than once.');
+      seen[h] = true;
+    });
+    if (Bulk.mode !== 'update') c.requiredColumns.forEach(function (h) { if (!seen[h]) Bulk.fileErrors.push('The required column "' + h + '" is missing.'); });
+    else if (!seen[c.idField]) Bulk.fileErrors.push('Update mode needs the "' + c.idField + '" column.');
+    const data = table.slice(1);
+    if (!data.length) Bulk.fileErrors.push('The file has no data rows.');
+    if (data.length > Bulk.info.maxRows) Bulk.fileErrors.push('The file has ' + data.length + ' rows. The limit is ' + Bulk.info.maxRows + ' rows per upload. Split it into parts.');
+    data.forEach(function (r) { if (r.length > headers.length) Bulk.fileErrors.push('Row ' + (data.indexOf(r) + 2) + ' has more cells than there are column headers.'); });
+    if (Bulk.fileErrors.length) { rerender(); return; }
+    Bulk.headers = headers;
+    Bulk.rows = data.map(function (r) { const o = {}; headers.forEach(function (h, i) { o[h] = r[i] === undefined ? '' : String(r[i]); }); return o; });
+    clientCheck();
+    await runPreview();
+  }
+
+  /** Quick checks in the browser. The server repeats them (and more) and has the final word. */
+  function clientCheck() {
+    const c = cat(), ids = {}; Bulk.clientErrors = {};
+    const add = function (n, f, m) { (Bulk.clientErrors[n] = Bulk.clientErrors[n] || []).push({ field: f, message: m }); };
+    Bulk.rows.forEach(function (r, i) {
+      const n = i + 2;
+      Bulk.headers.forEach(function (h) {
+        const v = String(r[h]).trim();
+        if (/^[=+\-@]/.test(v)) add(n, h, 'Values may not start with = + - or @ (they can be run as a spreadsheet formula). Remove that character.');
+        if (c.dateColumns.indexOf(h) !== -1 && v && !DATE_RE.test(v)) add(n, h, 'Use the date format YYYY-MM-DD (for example 2026-03-31) in ' + h + '.');
+        if (Bulk.mode !== 'update' && c.requiredColumns.indexOf(h) !== -1 && !v) add(n, h, h + ' is required.');
+      });
+      const id = String(r[c.idField] || '').trim().toLowerCase();
+      if (id) { if (ids[id]) add(n, c.idField, 'Duplicate ID in this file (also in row ' + ids[id] + ').'); else ids[id] = n; }
+    });
+  }
+
+  async function runPreview() {
+    Bulk.busy = true; Bulk.error = ''; rerender();
+    try { Bulk.preview = await DataService.bulkPreview(Bulk.category, Bulk.mode, Bulk.headers, Bulk.rows); }
+    catch (err) { Bulk.preview = null; Bulk.error = err.message || 'The file could not be checked.'; }
+    Bulk.busy = false; rerender();
+  }
+
+  /** Server messages win; a browser-only message is added when the server did not flag that column. */
+  function rowMessages(r) {
+    const cl = Bulk.clientErrors[r.row] || [], out = r.errors.slice();
+    cl.forEach(function (e) { if (!out.some(function (s) { return s.field === e.field; })) out.push(e); });
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ import */
+  async function confirmImport() {
+    const p = Bulk.preview; if (!p || Bulk.busy) return;
+    const n = p.counts.valid;
+    const ok = await UI.confirm({ title: 'Import ' + n + ' row' + (n === 1 ? '' : 's') + '?', confirmText: 'Import now', message: '<p>' + n + ' ' + E(cat().label.toLowerCase()) + ' row' + (n === 1 ? '' : 's') + ' will be written to the spreadsheet. The file is checked again on the server first.</p>' + (p.counts.rejected ? '<p><strong>' + p.counts.rejected + ' row(s) with errors will be skipped.</strong></p>' : '') + '<p>Nothing is deleted. This cannot be undone from here.</p>' });
+    if (!ok) return;
+    Bulk.busy = true; rerender();
+    try {
+      const res = await DataService.bulkImport(Bulk.category, Bulk.mode, Bulk.headers, Bulk.rows, { strict: Bulk.strict, confirmUpdate: Bulk.mode === 'update' && Bulk.confirmUpdate });
+      Bulk.result = res; Bulk.preview = null; const label = cat().label; const rows = Bulk.rows, headers = Bulk.headers;
+      Bulk.rows = []; Bulk.headers = []; Bulk.fileName = ''; Bulk.clientErrors = {}; Bulk.busy = false;
+      Bulk.result.rowsSent = rows.length; void headers;
+      await App.afterChange(res.committed ? ('Import finished: ' + res.counts.insert + ' added, ' + res.counts.update + ' updated (' + label + ').') : null);
+      if (!res.committed) UI.toast(res.reason || 'Nothing was imported.', 'error', 'Not imported');
+    } catch (err) {
+      Bulk.busy = false; Bulk.error = err.message || 'The import failed.'; UI.toast(Bulk.error, 'error', 'Import failed'); rerender();
+    }
+  }
+
+  function errorReport() {
+    const src = Bulk.result || Bulk.preview; if (!src) return;
+    const rows = [];
+    src.rows.forEach(function (r) {
+      if (r.status !== 'error') return;
+      const msgs = (Bulk.result ? r.errors : rowMessages(r)).map(function (e) { return (e.field ? e.field + ': ' : '') + e.message; }).join(' | ');
+      rows.push({ Row: r.row, ID: r.id, Problem: msgs });
+    });
+    (src.fileErrors || []).forEach(function (m) { rows.push({ Row: '', ID: '', Problem: m }); });
+    saveBlob('\ufeff' + toCSV([{ key: 'Row', label: 'Row' }, { key: 'ID', label: 'ID' }, { key: 'Problem', label: 'Problem' }], rows) + '\r\n', 'import-errors-' + Bulk.category + '-' + Dates.today() + '.csv');
+  }
+
+  /* ------------------------------------------------------------------ drawing */
+  function summaryName(r) {
+    const d = r.data || {};
+    const pick = Bulk.category === 'employees' ? [d.Employee_Name, d.Department] : Bulk.category === 'devices' ? [d.Asset_Tag, d.Brand, d.Model] : Bulk.category === 'assignments' ? [d.Employee_ID, d.Device_ID] : [d.Assignment_ID, d.Physical_Return_Date];
+    return pick.filter(Boolean).join(' · ');
+  }
+  function metric(label, value, sub, tone) { return '<div class="metric ' + (tone ? 'metric-' + tone : '') + '"><span class="metric-label">' + E(label) + '</span><span class="metric-value">' + value + '</span>' + (sub ? '<span class="metric-sub">' + E(sub) + '</span>' : '') + '</div>'; }
+  function resultBadge(r) { return r.status === 'ok' ? B(r.action === 'update' ? 'Will update' : 'Will add', 'green') : r.status === 'skip' ? B('No change', 'grey') : B('Rejected', 'red'); }
+
+  function guideCard() {
+    const c = cat();
+    const rows = c.headers.map(function (h) { return { col: h, req: Bulk.mode === 'update' ? (h === c.idField ? 'Yes' : 'No') : (c.requiredColumns.indexOf(h) !== -1 ? 'Yes' : 'Optional'), note: columnNotes(h) }; });
+    const note = Bulk.mode === 'update'
+      ? '<p class="muted small" style="padding:0 16px 8px">Update mode: only <strong>' + E(c.idField) + '</strong> is needed, plus the columns you want to change. <strong>Empty cells keep the current value</strong> — they never erase data.</p>'
+      : Bulk.category === 'assignments' ? '<p class="muted small" style="padding:0 16px 8px">Status, return date and return ID are filled in by the system, so they are not in this template. The device becomes Assigned automatically, exactly as in Device Allotment.</p>'
+      : Bulk.category === 'returns' ? '<p class="muted small" style="padding:0 16px 8px">Each assignment can be returned once. The assignment is closed and the device status is set by the same rules as the Returns page.</p>' : '';
+    return '<details class="card" style="margin-bottom:12px"><summary class="card-head" style="cursor:pointer"><h2>Column guide for ' + E(c.label) + '</h2><span class="muted small">What each column of the template means</span></summary>' + note +
+      UI.table({ id: 'bulk-guide', columns: [{ key: 'col', label: 'Column', sortable: false }, { key: 'req', label: 'Required', sortable: false }, { key: 'note', label: 'Notes', sortable: false }], rows: rows, noPaging: true, noSort: true, compact: true }) + '</details>';
+  }
+
+  function previewCard() {
+    if (Bulk.busy && !Bulk.preview) return '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Checking <strong>' + E(Bulk.fileName) + '</strong>…</h2></div><p class="muted" style="padding:0 16px 16px">Every row is being validated on the server. Nothing is saved yet.</p></section>';
+    if (Bulk.error) return '<div class="banner banner-danger" role="alert">' + I('alert', 18) + '<div>' + E(Bulk.error) + '</div></div>';
+    const p = Bulk.preview;
+    const fileErrs = Bulk.fileErrors.concat(p ? p.fileErrors : []);
+    if (fileErrs.length) return '<div class="banner banner-danger" role="alert">' + I('alert', 18) + '<div><strong>This file cannot be imported yet.</strong><ul style="margin:6px 0 0 18px">' + fileErrs.map(function (m) { return '<li>' + E(m) + '</li>'; }).join('') + '</ul></div></div>';
+    if (!p) return '';
+    const c = p.counts, update = Bulk.mode === 'update';
+    const clientBad = Object.keys(Bulk.clientErrors).length;
+    const blockedStrict = Bulk.strict && c.rejected > 0;
+    const canGo = c.valid > 0 && !blockedStrict && (!update || Bulk.confirmUpdate) && !Bulk.busy;
+    let list = p.rows.filter(function (r) { return !Bulk.onlyErrors || r.status === 'error'; });
+    const cols = [
+      { key: 'row', label: 'Row', sortable: false }, { key: 'status', label: 'Result', sortable: false, render: resultBadge },
+      { key: 'id', label: 'ID', sortable: false }, { key: 'sum', label: 'Details', sortable: false, render: function (r) { return E(summaryName(r) || '—'); } },
+      { key: 'msg', label: 'What was found', sortable: false, render: function (r) {
+        if (r.status === 'error') return '<ul class="bulk-msgs">' + rowMessages(r).map(function (e) { return '<li class="bulk-err">' + (e.field ? '<strong>' + E(e.field) + ':</strong> ' : '') + E(e.message) + '</li>'; }).join('') + '</ul>';
+        if (r.action === 'update') return '<ul class="bulk-msgs">' + r.changes.map(function (x) { return '<li class="bulk-chg"><strong>' + E(x.field) + ':</strong> ' + E(x.from || '—') + ' → ' + E(x.to || '—') + '</li>'; }).join('') + '</ul>';
+        return r.note ? E(r.note) : '<span class="muted">Ready</span>';
+      } }
+    ];
+    const tbl = UI.table({ id: 'bulk-preview', columns: cols, rows: list, pageSize: 15, noSort: true, emptyHtml: UI.empty({ title: 'No rows to show', text: 'There are no rows with errors.', icon: 'check' }) });
+    return '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Preview of <strong>' + E(Bulk.fileName) + '</strong></h2><span class="muted small">Nothing has been saved yet. Row 1 is the header; row numbers count records.</span></div>' +
+      '<div class="metrics" style="padding:0 16px">' + metric('Rows in file', p.total) + metric('Valid', c.valid, update ? c.update + ' to update' : c.insert + ' to add', 'ok') + metric('Rejected', c.rejected, c.rejected ? 'will be skipped' : 'none', c.rejected ? 'danger' : '') + metric(update ? 'No change' : 'To add', update ? c.skipped : c.insert) + metric(update ? 'To update' : 'Skipped', update ? c.update : c.skipped) + '</div>' +
+      '<div style="padding:0 16px 8px;display:flex;gap:16px;flex-wrap:wrap;align-items:center"><label class="bulk-check"><input type="checkbox" data-bulk="onlyErrors"' + (Bulk.onlyErrors ? ' checked' : '') + '> Show only rows with errors</label>' + (c.rejected ? '<button class="btn btn-sm" type="button" data-action="bulk-errors">' + I('download', 15) + 'Download error report</button>' : '') + '</div>' +
+      tbl +
+      '<div style="padding:14px 16px;border-top:1px solid var(--line)">' +
+        '<label class="bulk-check"><input type="checkbox" data-bulk="strict"' + (Bulk.strict ? ' checked' : '') + '> Cancel the whole import if any row has an error <span class="muted small">(recommended)</span></label>' +
+        (update ? '<label class="bulk-check"><input type="checkbox" data-bulk="confirmUpdate"' + (Bulk.confirmUpdate ? ' checked' : '') + '> I understand this will <strong>change ' + c.update + ' existing record' + (c.update === 1 ? '' : 's') + '</strong>.</label>' : '') +
+        (blockedStrict ? '<p class="bulk-err small" style="margin:6px 0">Fix the ' + c.rejected + ' row(s) with errors and upload the file again, or untick the box above to import only the valid rows.</p>' : '') +
+        (clientBad && !c.rejected ? '<p class="muted small" style="margin:6px 0">Some problems were found in your browser. Fix them and upload again.</p>' : '') +
+        '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-primary" type="button" data-action="bulk-confirm"' + (canGo ? '' : ' disabled') + '>' + I('upload', 16) + 'Confirm import (' + c.valid + ')</button><button class="btn" type="button" data-action="bulk-cancel">Cancel</button></div>' +
+      '</div></section>';
+  }
+
+  function resultCard() {
+    const r = Bulk.result; if (!r) return '';
+    const bad = r.rows.filter(function (x) { return x.status === 'error'; });
+    const head = r.committed ? '<div class="banner banner-ok" role="status">' + I('check', 18) + '<div><strong>Import finished.</strong> ' + r.counts.insert + ' added, ' + r.counts.update + ' updated, ' + r.counts.skipped + ' unchanged, ' + r.counts.rejected + ' rejected.</div></div>'
+      : '<div class="banner banner-warn" role="alert">' + I('alert', 18) + '<div><strong>Nothing was imported.</strong> ' + E(r.reason || '') + '</div></div>';
+    const tbl = bad.length ? UI.table({ id: 'bulk-result', columns: [{ key: 'row', label: 'Row', sortable: false }, { key: 'id', label: 'ID', sortable: false }, { key: 'msg', label: 'Why it was rejected', sortable: false, render: function (x) { return '<ul class="bulk-msgs">' + x.errors.map(function (e) { return '<li class="bulk-err">' + (e.field ? '<strong>' + E(e.field) + ':</strong> ' : '') + E(e.message) + '</li>'; }).join('') + '</ul>'; } }], rows: bad, pageSize: 10, noSort: true }) : '';
+    return '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Result of the last import</h2><span class="muted small">' + E(r.label || '') + '</span></div><div style="padding:0 16px 12px">' + head + '</div>' +
+      '<div class="metrics" style="padding:0 16px"><div class="metric metric-ok"><span class="metric-label">Added</span><span class="metric-value">' + r.counts.insert + '</span></div><div class="metric"><span class="metric-label">Updated</span><span class="metric-value">' + r.counts.update + '</span></div><div class="metric"><span class="metric-label">Skipped (no change)</span><span class="metric-value">' + r.counts.skipped + '</span></div><div class="metric ' + (r.counts.rejected ? 'metric-danger' : '') + '"><span class="metric-label">Rejected</span><span class="metric-value">' + r.counts.rejected + '</span></div></div>' + tbl +
+      '<div style="padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap">' + (bad.length ? '<button class="btn btn-sm" type="button" data-action="bulk-errors">' + I('download', 15) + 'Download error report</button>' : '') + '<button class="btn btn-sm" type="button" data-action="bulk-clear-result">Dismiss</button></div></section>';
+  }
+
+  function drawBulk() {
+    const root = document.getElementById('bulk-root'); if (!root) return;
+    const c = cat(), keep = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute('data-bulk');
+    const catOpts = Object.keys(Bulk.info.categories).map(function (k) { return '<option value="' + k + '"' + (k === Bulk.category ? ' selected' : '') + '>' + E(Bulk.info.categories[k].label) + '</option>'; }).join('');
+    root.innerHTML =
+      '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>1. Choose what to upload</h2></div>' +
+      '<div class="filter-bar" style="margin:0"><label class="filter"><span>Data category</span><select data-bulk="category"' + (Bulk.busy ? ' disabled' : '') + '>' + catOpts + '</select></label>' +
+      (c.canUpdate ? '<label class="filter"><span>What should happen to existing records?</span><select data-bulk="mode"' + (Bulk.busy ? ' disabled' : '') + '><option value="insert"' + (Bulk.mode === 'insert' ? ' selected' : '') + '>Add new records only (safe)</option><option value="update"' + (Bulk.mode === 'update' ? ' selected' : '') + '>Update existing records (changes data)</option></select></label>' : '') +
+      '<button class="btn" type="button" data-action="bulk-template">' + I('download', 16) + 'Download CSV template</button></div>' +
+      (Bulk.mode === 'update' ? '<div class="banner banner-warn" style="margin:0 16px 14px">' + I('alert', 18) + '<div>Update mode changes records that already exist. You will see exactly what changes before confirming.</div></div>' : '') + '</section>' +
+      guideCard() +
+      '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>2. Upload your filled-in file</h2><span class="muted small">CSV only · up to ' + Bulk.info.maxRows + ' rows and ' + (MAX_FILE_BYTES / 1024) + ' KB per file</span></div>' +
+      '<div style="padding:0 16px 16px"><input type="file" id="bulk-file" accept=".csv,text/csv" data-bulk="file"' + (Bulk.busy ? ' disabled' : '') + '><p class="muted small" style="margin-top:8px">The file is checked on the server first. <strong>Nothing is saved until you confirm.</strong> Existing records are never overwritten or deleted in "Add new" mode.</p></div></section>' +
+      previewCard() + resultCard();
+    if (keep) { const el = root.querySelector('[data-bulk="' + keep + '"]'); if (el && el.focus && keep !== 'file') el.focus(); }
+  }
+
+  Pages.bulk = {
+    title: 'Bulk Upload', desc: 'Add many employees, devices, allotments or returns at once from a CSV file.', defaults: {},
+    actions: function () { return ''; },
+    load: async function () { if (!Bulk.info) Bulk.info = await DataService.bulkInfo(); },
+    render: function (c) { c.innerHTML = '<div id="bulk-root"></div>'; drawBulk(); }
+  };
+
+  /* ------------------------------------------------------------------ Administrators page */
+  const Admins = { data: null };
+  function adminsView(c) {
+    const d = Admins.data, me = (Auth.user() || {}).username;
+    const fmt = function (s) { return s ? E(String(s).slice(0, 10)) : '—'; };
+    const people = UI.table({ id: 'admin-people', noSort: true, noPaging: true, columns: [
+      { key: 'name', label: 'Name', render: function (a) { return E(a.name) + (a.you ? ' ' + B('You', 'blue') : ''); } },
+      { key: 'username', label: 'Username' }, { key: 'active', label: 'Status', render: function (a) { return a.active ? B('Active', 'green') : B('Disabled', 'grey'); } },
+      { key: 'created', label: 'Added', render: function (a) { return fmt(a.created); } }, { key: 'approvedBy', label: 'Approved by' },
+      { key: 'x', label: '', render: function (a) { return a.you ? '' : '<button class="btn btn-sm" type="button" data-action="admin-toggle" data-id="' + E(a.username) + '" data-on="' + (a.active ? '0' : '1') + '">' + (a.active ? 'Disable' : 'Enable') + '</button>'; } }
+    ], rows: d.admins });
+    const reqs = d.requests.length ? UI.table({ id: 'admin-reqs', noSort: true, noPaging: true, columns: [
+      { key: 'name', label: 'Name' }, { key: 'username', label: 'Username' }, { key: 'requested', label: 'Requested', render: function (r) { return fmt(r.requested); } },
+      { key: 'x', label: '', render: function (r) { return '<button class="btn btn-sm btn-primary" type="button" data-action="admin-approve" data-id="' + E(r.username) + '">Approve</button> <button class="btn btn-sm" type="button" data-action="admin-reject" data-id="' + E(r.username) + '">Reject</button>'; } }
+    ], rows: d.requests }) : UI.empty({ title: 'No requests waiting', text: 'People can ask for access from the login page. You will approve them here.', icon: 'user' });
+    c.innerHTML =
+      '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Access requests</h2><span class="muted small">A request gives no access until you approve it.</span></div>' + reqs + '</section>' +
+      '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Administrators</h2></div>' + people + '</section>' +
+      '<section class="card" style="margin-bottom:12px"><div class="card-head"><h2>Change my password</h2><span class="muted small">Signed in as ' + E(me || '') + '. Changing it signs out your other sessions.</span></div>' +
+      '<form class="pw-form" novalidate style="padding:0 16px 16px;max-width:460px"><div class="form-alert" role="alert" hidden></div>' +
+      UI.field({ name: 'currentPassword', label: 'Current password', type: 'password', required: true }) + UI.field({ name: 'newPassword', label: 'New password', type: 'password', required: true }) + UI.field({ name: 'confirmPassword', label: 'Repeat new password', type: 'password', required: true }) +
+      '<p class="muted small" style="margin:4px 0 10px">At least 10 characters, with letters and numbers.</p><button class="btn btn-primary" type="submit">Change password</button></form></section>';
+  }
+  Pages.admins = {
+    title: 'Administrators', desc: 'Approve access requests and manage who can change data.', defaults: {},
+    actions: function () { return ''; },
+    load: async function () { Admins.data = await DataService.adminList(); },
+    render: function (c) { adminsView(c); }
+  };
+  async function adminCall(fn, args, okMsg) {
+    try { Admins.data = await fn.apply(null, args); UI.toast(okMsg, 'success'); await App.render({ silent: true }); }
+    catch (err) { UI.toast(err.message, 'error', 'Not done'); }
+  }
+
+  /* ------------------------------------------------------------------ events */
+  const A = App.actions;
+  A['bulk-template'] = downloadTemplate;
+  A['bulk-confirm'] = confirmImport;
+  A['bulk-errors'] = errorReport;
+  A['bulk-cancel'] = function () { resetFile(); rerender(); };
+  A['bulk-clear-result'] = function () { Bulk.result = null; rerender(); };
+  A['admin-approve'] = async function (el) {
+    if (await UI.confirm({ title: 'Approve ' + el.dataset.id + '?', confirmText: 'Approve', message: '<p>This person will be able to sign in and <strong>change all dashboard data</strong>.</p>' })) adminCall(DataService.adminApprove, [el.dataset.id], el.dataset.id + ' can now sign in.');
+  };
+  A['admin-reject'] = async function (el) {
+    if (await UI.confirm({ title: 'Reject ' + el.dataset.id + '?', tone: 'danger', confirmText: 'Reject', message: '<p>The request will be removed.</p>' })) adminCall(DataService.adminReject, [el.dataset.id], 'Request rejected.');
+  };
+  A['admin-toggle'] = async function (el) {
+    const on = el.dataset.on === '1';
+    if (await UI.confirm({ title: (on ? 'Enable ' : 'Disable ') + el.dataset.id + '?', tone: on ? '' : 'danger', confirmText: on ? 'Enable' : 'Disable', message: '<p>' + (on ? 'This administrator will be able to sign in again.' : 'This administrator is signed out immediately and cannot sign in until enabled again.') + '</p>' })) adminCall(DataService.adminSetActive, [el.dataset.id, on], el.dataset.id + (on ? ' enabled.' : ' disabled.'));
+  };
+
+  document.addEventListener('change', function (ev) {
+    const el = ev.target.closest && ev.target.closest('[data-bulk]'); if (!el || !Bulk.info) return;
+    const k = el.getAttribute('data-bulk');
+    if (k === 'file') { onFile(el.files && el.files[0]); return; }
+    if (k === 'category') { Bulk.category = el.value; Bulk.mode = 'insert'; resetFile(); rerender(); return; }
+    if (k === 'mode') { Bulk.mode = el.value; resetFile(); rerender(); return; }
+    if (k === 'strict') Bulk.strict = el.checked;
+    if (k === 'confirmUpdate') Bulk.confirmUpdate = el.checked;
+    if (k === 'onlyErrors') { Bulk.onlyErrors = el.checked; UI.resetPage('bulk-preview'); }
+    rerender();
+  });
+
+  document.addEventListener('submit', async function (ev) {
+    const f = ev.target.closest && ev.target.closest('form.pw-form'); if (!f) return;
+    ev.preventDefault();
+    const v = { currentPassword: f.elements.currentPassword.value, newPassword: f.elements.newPassword.value, confirmPassword: f.elements.confirmPassword.value }, btn = f.querySelector('button[type="submit"]');
+    if (v.newPassword !== v.confirmPassword) { UI.showErrors(f, { confirmPassword: 'The two new passwords do not match.' }); return; }
+    UI.clearErrors(f); btn.disabled = true;
+    try { await DataService.changePassword({ currentPassword: v.currentPassword, newPassword: v.newPassword }); f.reset(); UI.toast('Your password was changed.', 'success', 'Password changed'); }
+    catch (err) { UI.showErrors(f, err.fields || {}, err.message); }
+    btn.disabled = false;
+  });
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
