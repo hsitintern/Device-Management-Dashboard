@@ -234,6 +234,13 @@ h1 { font-size: 24px; font-weight: 600; letter-spacing: -.01em; outline: 0; }
 /* ---------- public (read-only) view and bulk upload ---------- */
 .btn[hidden] { display: none !important; }
 a.btn { text-decoration: none; }
+.office-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-bottom: 14px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.office-bar label { font-weight: 600; font-size: 13px; color: var(--ink-2); }
+.office-bar select { height: 34px; min-width: 190px; max-width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); padding: 0 10px; color: var(--ink); font: inherit; }
+.office-bar select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.office-note { font-size: 12.5px; color: var(--ink-2); } .office-note.has-unassigned { color: #7a5200; } .office-note .muted { color: var(--muted); }
+.office-section { margin: 22px 0 10px; } .office-section h2 { font-size: 17px; margin: 0; }
+@media (max-width: 640px) { .office-bar select { flex: 1 1 100%; } }
 @media (max-width: 640px) { body.is-live #mode-pill, body.is-live .profile-text { display: none; } body.is-live .search-wrap { flex: 1 1 40px; min-width: 0; width: auto; } body.is-live .topbar { gap: 8px; padding: 0 12px; } body.is-live .topbar .spacer { display: none; } body.is-live .topbar .btn { flex: none; white-space: nowrap; } }
 body.is-public :is([data-action="add-device"], [data-action="edit-device"], [data-action="allot-device"], [data-action="add-employee"], [data-action="edit-employee"], [data-action="allot"], [data-action="mark-returned"], [data-action="remove-option"], form.add-option, .chip-x) { display: none !important; }
 .bulk-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; min-width: 220px; }
@@ -275,6 +282,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       </header>
 
       <main class="page">
+        <div class="office-bar" id="office-bar" hidden><label for="office-select">Office</label><select id="office-select" aria-label="Show the whole dashboard for one office"></select><span class="office-note" id="office-note" role="status"></span></div>
         <div class="page-head">
           <div>
             <nav class="breadcrumb" id="breadcrumb" aria-label="Breadcrumb"></nav>
@@ -389,11 +397,12 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     'Device Statuses': ['Available', 'Assigned', 'Under Repair', 'Retired', 'Lost'],
     'Ownership Types': ['Owned', 'Rented'],
     'Employment Statuses': ['Active', 'Notice Period', 'Exited'],
-    'Assignment Statuses': ['Active', 'Returned', 'Cancelled']
+    'Assignment Statuses': ['Active', 'Returned', 'Cancelled'],
+    'Office': ['Higher.study Pune', 'Higher.study Odisha', 'ADA Tech Solutions']
   };
 
   // Lists whose values drive workflow rules. They are shown in Settings but locked in the demo.
-  const LOCKED_LISTS = ['Device Statuses', 'Ownership Types', 'Employment Statuses', 'Assignment Statuses'];
+  const LOCKED_LISTS = ['Device Statuses', 'Ownership Types', 'Employment Statuses', 'Assignment Statuses', 'Office'];
   // Values inside editable lists that the app logic relies on.
   const PROTECTED_VALUES = { 'Device Conditions': ['New', 'Good', 'Fair', 'Damaged'] };
 
@@ -596,6 +605,13 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     return true;
   }
 
+  /** Office must be exactly one of the names in the Lists sheet. A blank value is allowed only when required is false (the record stays Unassigned). */
+  function office(e, d, lists, required) {
+    const list = (lists || {})['Office'] || [];
+    if (!has(d.Office)) { if (required) e.Office = 'Office is required. Choose one of: ' + list.join(', ') + '.'; return; }
+    if (list.length && list.indexOf(d.Office) === -1) e.Office = 'Office must be exactly one of: ' + list.join(', ') + '.';
+  }
+
   const Validation = {
     has: has,
 
@@ -629,6 +645,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
           e.Current_Status = 'New devices cannot start as Assigned. Save as Available, then use Device Allotment.';
         }
       }
+      office(e, d, lists, !!ctx.officeRequired);
       return e;
     },
 
@@ -649,6 +666,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       const needsLwd = d.Employment_Status === 'Notice Period' || d.Employment_Status === 'Exited';
       const lw = dateField(e, d, 'Last_Working_Date', 'Last working date', needsLwd);
       if (jd && lw && d.Last_Working_Date < d.Joining_Date) e.Last_Working_Date = 'Last working date cannot be before the joining date.';
+      office(e, d, lists, !!ctx.officeRequired);
       return e;
     },
 
@@ -665,6 +683,8 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       dateField(e, d, 'Issue_Date', 'Issue date', true);
       req(e, d, 'Issued_By', 'Issued by');
       req(e, d, 'Condition_At_Issue', 'Condition at issue'); inList(e, d, 'Condition_At_Issue', 'Condition at issue', (ctx.lists || {})['Device Conditions']);
+      // No office matching: any device can go to any employee. The office comes from the device; a typed one is only checked when the device has none.
+      if (!(ctx.device && has(ctx.device.Office))) office(e, d, ctx.lists, false);
       return e;
     },
 
@@ -682,6 +702,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       req(e, d, 'Condition_At_Return', 'Condition at return'); inList(e, d, 'Condition_At_Return', 'Condition at return', (ctx.lists || {})['Device Conditions']);
       req(e, d, 'Received_By', 'Received by');
       if (has(d.Device_Status_After) && ['Available', 'Under Repair'].indexOf(d.Device_Status_After) === -1) e.Device_Status_After = 'Choose Available or Under Repair.';
+      office(e, d, ctx.lists, true);
       return e;
     }
   };
@@ -719,8 +740,8 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   }
   function pick(src, fields) { const o = {}; fields.forEach(function (f) { o[f] = src[f] == null ? '' : src[f]; }); return o; }
 
-  const DEVICE_FIELDS = ['Device_ID', 'Asset_Tag', 'Device_Type', 'Brand', 'Model', 'Serial_Number', 'Device_Ownership_Type', 'Rental_Vendor', 'Rental_Start_Date', 'Rental_End_Date', 'Device_Condition', 'Current_Status', 'Notes'];
-  const EMPLOYEE_FIELDS = ['Employee_ID', 'Employee_Name', 'Work_Email', 'Department', 'Designation', 'Manager_Name', 'Joining_Date', 'Employment_Status', 'Last_Working_Date', 'Notes'];
+  const DEVICE_FIELDS = ['Device_ID', 'Asset_Tag', 'Device_Type', 'Brand', 'Model', 'Serial_Number', 'Device_Ownership_Type', 'Rental_Vendor', 'Rental_Start_Date', 'Rental_End_Date', 'Device_Condition', 'Current_Status', 'Notes', 'Office'];
+  const EMPLOYEE_FIELDS = ['Employee_ID', 'Employee_Name', 'Work_Email', 'Department', 'Designation', 'Manager_Name', 'Joining_Date', 'Employment_Status', 'Last_Working_Date', 'Notes', 'Office'];
 
   const Rules = { RuleError: RuleError, OPEN: OPEN, DEVICE_FIELDS: DEVICE_FIELDS, EMPLOYEE_FIELDS: EMPLOYEE_FIELDS };
 
@@ -763,37 +784,68 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   };
 
   /* --------------------------------------------------------------- view rows */
-  Rules.deviceRows = function (s) {
+  /* ---------------------------------------------------------------- office filter
+   * Rules.officeFilter: '' = All Offices, '__none__' = Unassigned only, otherwise one office name.
+   * The row builders and the dashboard use it unless an explicit office argument is passed ('' = everything). */
+  Rules.officeFilter = '';
+  Rules.officeOf = function (rec, s) {
+    const o = String((rec && rec.Office) || '').trim(), l = (s && s.lists && s.lists['Office']) || [];
+    return l.indexOf(o) !== -1 ? o : '';
+  };
+  Rules.inOffice = function (arr, s, office) {
+    if (office === undefined) office = Rules.officeFilter;
+    if (!office) return arr;
+    return arr.filter(function (r) { const o = Rules.officeOf(r, s); return office === '__none__' ? o === '' : o === office; });
+  };
+  /** An assignment's office is the one saved on it. Old assignments saved before offices existed have none; while such an
+   *  assignment is still open it is shown under its device's CURRENT office (display only, nothing is written to the sheet). */
+  Rules.asgOffice = function (a, ix, s) {
+    const o = Rules.officeOf(a, s); if (o) return o;
+    return Rules.isOpen(a) ? Rules.officeOf(ix.dev[a.Device_ID], s) : '';
+  };
+  Rules.asgInOffice = function (s, ix, office) {
+    if (office === undefined) office = Rules.officeFilter;
+    if (!office) return s.assignments;
+    return s.assignments.filter(function (a) { const o = Rules.asgOffice(a, ix, s); return office === '__none__' ? o === '' : o === office; });
+  };
+  Rules.unassignedCounts = function (s) {
     const ix = Rules.index(s);
-    return s.devices.map(function (d) {
+    const n = function (arr) { return arr.filter(function (r) { return Rules.officeOf(r, s) === ''; }).length; };
+    return { devices: n(s.devices), employees: n(s.employees), assignments: s.assignments.filter(function (a) { return Rules.asgOffice(a, ix, s) === ''; }).length, returns: n(s.returns) };
+  };
+  Rules.isLostResolution = function (r) { return String(r.Missing_Items || '') === 'Entire device' && !r.Condition_At_Return; };
+
+  Rules.deviceRows = function (s, office) {
+    const ix = Rules.index(s);
+    return Rules.inOffice(s.devices, s, office).map(function (d) {
       const a = ix.openByDevice[d.Device_ID];
       const e = a ? ix.emp[a.Employee_ID] : null;
       return Object.assign({}, d, { _assignmentId: a ? a.Assignment_ID : '', _holderId: e ? e.Employee_ID : '', _holderName: e ? e.Employee_Name : '', _hasHistory: !!(ix.asgByDev[d.Device_ID] || []).length });
     });
   };
 
-  Rules.employeeRows = function (s) {
+  Rules.employeeRows = function (s, office) {
     const ix = Rules.index(s);
-    return s.employees.map(function (e) {
+    return Rules.inOffice(s.employees, s, office).map(function (e) {
       return Object.assign({}, e, { _activeDevices: (ix.openByEmp[e.Employee_ID] || []).length, _totalAssignments: (ix.asgByEmp[e.Employee_ID] || []).length });
     });
   };
 
-  Rules.assignmentRows = function (s, today) {
+  Rules.assignmentRows = function (s, today, office) {
     const ix = Rules.index(s);
-    return s.assignments.map(function (a) {
+    return Rules.asgInOffice(s, ix, office).map(function (a) {
       const e = ix.emp[a.Employee_ID] || {}, d = ix.dev[a.Device_ID] || {};
       return Object.assign({}, a, {
         _empName: e.Employee_Name || a.Employee_ID, _dept: e.Department || '', _devType: d.Device_Type || '', _asset: d.Asset_Tag || '', _brandModel: ((d.Brand || '') + ' ' + (d.Model || '')).trim(),
-        _ownership: d.Device_Ownership_Type || ''
+        _ownership: d.Device_Ownership_Type || '', _empOffice: e.Office || '', _office: Rules.asgOffice(a, ix, s)
       });
     });
   };
 
   /** One row per ACTUAL return record. Active (not yet returned) assignments are never listed here. */
-  Rules.returnRows = function (s, today) {
+  Rules.returnRows = function (s, today, office) {
     const ix = Rules.index(s), rows = [];
-    s.returns.forEach(function (r) {
+    Rules.inOffice(s.returns, s, office).forEach(function (r) {
       const a = ix.asg[r.Assignment_ID]; if (!a) return;
       const e = ix.emp[a.Employee_ID] || {}, d = ix.dev[a.Device_ID] || {};
       rows.push(Object.assign({
@@ -804,12 +856,12 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     return rows;
   };
 
-  Rules.globalSearch = function (s, q) {
+  Rules.globalSearch = function (s, q, office) {
     q = String(q || '').trim().toLowerCase();
     if (q.length < 2) return { employees: [], devices: [] };
     const ix = Rules.index(s);
-    const employees = s.employees.filter(function (e) { return [e.Employee_ID, e.Employee_Name, e.Work_Email].join(' ').toLowerCase().indexOf(q) !== -1; }).slice(0, 5);
-    const devices = s.devices.filter(function (d) { return [d.Device_ID, d.Asset_Tag, d.Serial_Number, d.Device_Type, d.Brand, d.Model].join(' ').toLowerCase().indexOf(q) !== -1; }).slice(0, 6)
+    const employees = Rules.inOffice(s.employees, s, office).filter(function (e) { return [e.Employee_ID, e.Employee_Name, e.Work_Email].join(' ').toLowerCase().indexOf(q) !== -1; }).slice(0, 5);
+    const devices = Rules.inOffice(s.devices, s, office).filter(function (d) { return [d.Device_ID, d.Asset_Tag, d.Serial_Number, d.Device_Type, d.Brand, d.Model].join(' ').toLowerCase().indexOf(q) !== -1; }).slice(0, 6)
       .map(function (d) { const a = ix.openByDevice[d.Device_ID]; return Object.assign({}, d, { _holderName: a && ix.emp[a.Employee_ID] ? ix.emp[a.Employee_ID].Employee_Name : '' }); });
     return { employees: employees, devices: devices };
   };
@@ -817,31 +869,34 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   Rules.employeeProfile = function (s, empId, today) {
     const ix = Rules.index(s), e = ix.emp[empId];
     if (!e) return null;
-    const rows = Rules.assignmentRows(s, today).filter(function (a) { return a.Employee_ID === empId; });
-    const rets = Rules.returnRows(s, today).filter(function (r) { return r.Employee_ID === empId && r._isReal; });
+    const rows = Rules.assignmentRows(s, today, '').filter(function (a) { return a.Employee_ID === empId; });
+    const rets = Rules.returnRows(s, today, '').filter(function (r) { return r.Employee_ID === empId && r._isReal; });
     return { employee: e, current: rows.filter(Rules.isOpen), history: rows.slice().sort(function (a, b) { return compare(b.Issue_Date, a.Issue_Date); }), returns: rets };
   };
 
   Rules.deviceProfile = function (s, devId, today) {
     const ix = Rules.index(s), d = ix.dev[devId];
     if (!d) return null;
-    const rows = Rules.assignmentRows(s, today).filter(function (a) { return a.Device_ID === devId; }).sort(function (a, b) { return compare(b.Issue_Date, a.Issue_Date); });
+    const rows = Rules.assignmentRows(s, today, '').filter(function (a) { return a.Device_ID === devId; }).sort(function (a, b) { return compare(b.Issue_Date, a.Issue_Date); });
     const open = ix.openByDevice[devId];
     return { device: d, current: open ? rows.filter(function (r) { return r.Assignment_ID === open.Assignment_ID; })[0] : null, history: rows };
   };
 
   /* --------------------------------------------------------------- dashboard */
-  Rules.dashboard = function (s, today) {
+  Rules.dashboard = function (s, today, office) {
     const ix = Rules.index(s);
+    const eff = office === undefined ? Rules.officeFilter : office;
+    const devs = Rules.inOffice(s.devices, s, eff), emps = Rules.inOffice(s.employees, s, eff), asgs = Rules.asgInOffice(s, ix, eff), rets = Rules.inOffice(s.returns, s, eff);
+    const realRets = rets.filter(function (r) { return !Rules.isLostResolution(r); }); // a "resolved as lost" record is not a physical return
     const countBy = function (arr, fn) { const m = {}; arr.forEach(function (x) { const k = fn(x); m[k] = (m[k] || 0) + 1; }); return m; };
-    const status = countBy(s.devices, function (d) { return d.Current_Status; });
-    const open = s.assignments.filter(Rules.isOpen);
-    const empWith = {}; open.forEach(function (a) { empWith[a.Employee_ID] = 1; });
+    const status = countBy(devs, function (d) { return d.Current_Status; });
+    const open = asgs.filter(Rules.isOpen);
+    const empWith = {}; emps.forEach(function (e) { if ((ix.openByEmp[e.Employee_ID] || []).length) empWith[e.Employee_ID] = 1; });
     const pending = open; // every Active assignment is a device that has not been physically returned yet
 
-    const typeCounts = countBy(s.devices, function (d) { return d.Device_Type; });
+    const typeCounts = countBy(devs, function (d) { return d.Device_Type; });
     const byType = Object.keys(typeCounts).map(function (k) { return { label: k, count: typeCounts[k] }; }).sort(function (a, b) { return b.count - a.count || compare(a.label, b.label); });
-    const ownCounts = countBy(s.devices, function (d) { return d.Device_Ownership_Type; });
+    const ownCounts = countBy(devs, function (d) { return d.Device_Ownership_Type; });
     const ownOrder = (s.lists['Ownership Types'] || []).slice();
     Object.keys(ownCounts).forEach(function (k) { if (ownOrder.indexOf(k) === -1) ownOrder.push(k); });
     const byOwnership = ownOrder.map(function (k) { return { label: k, count: ownCounts[k] || 0 }; });
@@ -849,15 +904,34 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     Object.keys(status).forEach(function (k) { if (statOrder.indexOf(k) === -1) statOrder.push(k); });
     const byStatus = statOrder.map(function (k) { return { label: k, count: status[k] || 0 }; });
 
-    const aRows = Rules.assignmentRows(s, today), rRows = Rules.returnRows(s, today);
+    const aRows = Rules.assignmentRows(s, today, eff), rRows = Rules.returnRows(s, today, eff);
     const recentAllotments = aRows.slice().sort(function (a, b) { return compare(b.Issue_Date, a.Issue_Date) || compare(b.Assignment_ID, a.Assignment_ID); }).slice(0, 6);
     const recentReturns = rRows.slice().sort(function (a, b) { return compare(b.Physical_Return_Date, a.Physical_Return_Date) || compare(b.Return_ID, a.Return_ID); }).slice(0, 6);
     // Outstanding allotments: active assignments not yet returned, oldest allocation first.
     const outstanding = aRows.filter(function (a) { return Rules.isOpen(a); })
       .sort(function (a, b) { return compare(a.Issue_Date, b.Issue_Date) || compare(a.Assignment_ID, b.Assignment_ID); }).slice(0, 8);
 
+    // ----- office comparison (All Offices: every office plus Unassigned; one office: just that one)
+    const offList = (s.lists['Office'] || []).slice();
+    const offLabels = eff ? [eff === '__none__' ? 'Unassigned' : eff] : offList.concat(['Unassigned']);
+    const grp = function (arr, pred) {
+      return offLabels.map(function (l) { return { label: l, count: arr.filter(function (x) { return (Rules.officeOf(x, s) || 'Unassigned') === l && (!pred || pred(x)); }).length }; });
+    };
+    const typeNames = byType.map(function (t) { return t.label; });
+    const offices = {
+      labels: offLabels, devices: grp(devs), employees: grp(emps), returns: grp(realRets),
+      available: grp(devs, function (d) { return d.Current_Status === 'Available'; }), allotted: grp(devs, function (d) { return d.Current_Status === 'Assigned'; }),
+      owned: grp(devs, function (d) { return d.Device_Ownership_Type === 'Owned'; }), rented: grp(devs, function (d) { return d.Device_Ownership_Type === 'Rented'; }),
+      types: typeNames.map(function (t) { return { label: t, perOffice: grp(devs, function (d) { return d.Device_Type === t; }) }; })
+    };
+
     return {
-      totals: { total: s.devices.length, assigned: status['Assigned'] || 0, available: status['Available'] || 0, employeesWithDevices: Object.keys(empWith).length, pendingReturns: pending.length },
+      totals: {
+        total: devs.length, assigned: status['Assigned'] || 0, available: status['Available'] || 0, employeesWithDevices: Object.keys(empWith).length, pendingReturns: pending.length,
+        employees: emps.length, activeEmployees: emps.filter(function (e) { return e.Employment_Status === 'Active'; }).length,
+        owned: ownCounts['Owned'] || 0, rented: ownCounts['Rented'] || 0, returned: realRets.length
+      },
+      offices: offices, unassigned: Rules.unassignedCounts(s),
       byType: byType, byOwnership: byOwnership, byStatus: byStatus, recentAllotments: recentAllotments, recentReturns: recentReturns, outstanding: outstanding
     };
   };
@@ -869,7 +943,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     const d = trim(data);
     if (!has(d.Device_ID)) d.Device_ID = Rules.nextDeviceId(s.devices);
     if (d.Device_Ownership_Type !== 'Rented') { d.Rental_Vendor = ''; d.Rental_Start_Date = ''; d.Rental_End_Date = ''; }
-    const errs = Validation.device(d, { devices: s.devices, lists: s.lists });
+    const errs = Validation.device(d, { devices: s.devices, lists: s.lists, officeRequired: true });
     if (!isEmpty(errs)) fail(errs);
     const rec = pick(d, DEVICE_FIELDS);
     s.devices.push(rec);
@@ -879,8 +953,9 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   Rules.updateDevice = function (s, data) {
     const d = trim(data), ix = Rules.index(s), cur = ix.dev[d.Device_ID];
     if (!cur) throw new RuleError('Device ' + d.Device_ID + ' was not found.');
+    if (!Object.prototype.hasOwnProperty.call(data || {}, 'Office')) d.Office = cur.Office; // a request that does not mention Office leaves it alone
     if (d.Device_Ownership_Type !== 'Rented') { d.Rental_Vendor = ''; d.Rental_Start_Date = ''; d.Rental_End_Date = ''; }
-    const errs = Validation.device(d, { devices: s.devices, lists: s.lists, editingId: cur.Device_ID, hasOpenAssignment: !!ix.openByDevice[cur.Device_ID] });
+    const errs = Validation.device(d, { devices: s.devices, lists: s.lists, editingId: cur.Device_ID, hasOpenAssignment: !!ix.openByDevice[cur.Device_ID], officeRequired: has(cur.Office) });
     if (!isEmpty(errs)) fail(errs);
     DEVICE_FIELDS.forEach(function (f) { if (f !== 'Device_ID') cur[f] = d[f] == null ? '' : d[f]; });
     return cur;
@@ -898,7 +973,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   Rules.addEmployee = function (s, data) {
     const d = trim(data);
     if (d.Employment_Status === 'Active') d.Last_Working_Date = '';
-    const errs = Validation.employee(d, { employees: s.employees, lists: s.lists });
+    const errs = Validation.employee(d, { employees: s.employees, lists: s.lists, officeRequired: true });
     if (!isEmpty(errs)) fail(errs);
     const rec = pick(d, EMPLOYEE_FIELDS);
     s.employees.push(rec);
@@ -908,8 +983,9 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   Rules.updateEmployee = function (s, data) {
     const d = trim(data), ix = Rules.index(s), cur = ix.emp[d.Employee_ID];
     if (!cur) throw new RuleError('Employee ' + d.Employee_ID + ' was not found.');
+    if (!Object.prototype.hasOwnProperty.call(data || {}, 'Office')) d.Office = cur.Office; // a request that does not mention Office leaves it alone
     if (d.Employment_Status === 'Active') d.Last_Working_Date = '';
-    const errs = Validation.employee(d, { employees: s.employees, lists: s.lists, editingId: cur.Employee_ID });
+    const errs = Validation.employee(d, { employees: s.employees, lists: s.lists, editingId: cur.Employee_ID, officeRequired: has(cur.Office) });
     if (!isEmpty(errs)) fail(errs);
     EMPLOYEE_FIELDS.forEach(function (f) { if (f !== 'Employee_ID') cur[f] = d[f] == null ? '' : d[f]; });
     return cur;
@@ -922,7 +998,8 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     if (!isEmpty(errs)) fail(errs);
     const rec = {
       Assignment_ID: Rules.nextId('ASG-', 4, s.assignments, 'Assignment_ID'), Employee_ID: emp.Employee_ID, Device_ID: dev.Device_ID, Issue_Date: d.Issue_Date, Issued_By: d.Issued_By,
-      Condition_At_Issue: d.Condition_At_Issue, Accessories_Issued: d.Accessories_Issued || '', Assignment_Status: 'Active', Return_Date: '', Return_ID: '', Remarks: d.Remarks || ''
+      Condition_At_Issue: d.Condition_At_Issue, Accessories_Issued: d.Accessories_Issued || '', Assignment_Status: 'Active', Return_Date: '', Return_ID: '', Remarks: d.Remarks || '',
+      Office: (dev.Office || d.Office || '') // the DEVICE's office; the employee's office stays on the employee record. No office matching.
     };
     s.assignments.push(rec);
     dev.Current_Status = 'Assigned';
@@ -956,11 +1033,12 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     if (dev.Current_Status === 'Lost' || dev.Current_Status === 'Retired') status = dev.Current_Status; // never made Available
     const rec = {
       Return_ID: Rules.nextId('RET-', 4, s.returns, 'Return_ID'), Assignment_ID: a.Assignment_ID, Device_ID: a.Device_ID, Employee_ID: a.Employee_ID, Physical_Return_Date: d.Return_Date,
-      Condition_At_Return: cond, Accessories_Returned: d.Accessories_Returned || '', Missing_Items: d.Missing_Items || '', Received_By: d.Received_By, Remarks: d.Remarks || ''
+      Condition_At_Return: cond, Accessories_Returned: d.Accessories_Returned || '', Missing_Items: d.Missing_Items || '', Received_By: d.Received_By, Remarks: d.Remarks || '', Office: d.Office
     };
     s.returns.push(rec);
     a.Assignment_Status = 'Returned'; a.Return_Date = d.Return_Date; a.Return_ID = rec.Return_ID;
     dev.Current_Status = status;
+    dev.Office = d.Office; // the device's current office is where it was received; the assignment keeps the office it was issued from
     dev.Device_Condition = cond;
     return Object.assign({}, rec, { _deviceStatus: status });
   };
@@ -972,6 +1050,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     if (!Rules.isOpen(a)) throw new RuleError('This assignment is already ' + a.Assignment_Status + '.');
     if (!has(d.Remarks)) fail({ Remarks: 'Add a remark explaining the loss decision.' });
     const rec = { Return_ID: Rules.nextId('RET-', 4, s.returns, 'Return_ID'), Assignment_ID: a.Assignment_ID, Device_ID: a.Device_ID, Employee_ID: a.Employee_ID, Physical_Return_Date: today, Condition_At_Return: '', Accessories_Returned: '', Missing_Items: 'Entire device', Received_By: '', Remarks: 'Resolved as lost: ' + d.Remarks };
+    rec.Office = '';
     s.returns.push(rec);
     a.Assignment_Status = 'Returned'; a.Return_Date = today; a.Return_ID = rec.Return_ID;
     const dev = ix.dev[a.Device_ID];
@@ -1071,7 +1150,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
 
     if (key === 'inventory') {
       return {
-        columns: [C('Device_ID', 'Device ID'), C('Asset_Tag', 'Asset Tag'), C('Device_Type', 'Device Type'), C('Brand', 'Brand'), C('Model', 'Model'), C('Serial_Number', 'Serial Number'), C('Device_Ownership_Type', 'Ownership', 'ownership'), C('Rental_Vendor', 'Rental Vendor'), C('Rental_End_Date', 'Rental End', 'date'), C('Device_Condition', 'Condition'), C('Current_Status', 'Status', 'status'), C('Assigned_To', 'Assigned To')],
+        columns: [C('Device_ID', 'Device ID'), C('Asset_Tag', 'Asset Tag'), C('Office', 'Office'), C('Device_Type', 'Device Type'), C('Brand', 'Brand'), C('Model', 'Model'), C('Serial_Number', 'Serial Number'), C('Device_Ownership_Type', 'Ownership', 'ownership'), C('Rental_Vendor', 'Rental Vendor'), C('Rental_End_Date', 'Rental End', 'date'), C('Device_Condition', 'Condition'), C('Current_Status', 'Status', 'status'), C('Assigned_To', 'Assigned To')],
         rows: dRows.filter(function (d) { return devOk(d, flt); }).map(function (d) { return Object.assign({}, d, { Assigned_To: d._holderName }); })
       };
     }
@@ -1102,7 +1181,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       return { columns: [C('Status', 'Status', 'status'), C('Count', 'Devices'), C('Share', '% of Devices'), C('Owned', 'Owned'), C('Rented', 'Rented')], rows: rows };
     }
 
-    const asgCols = [C('Assignment_ID', 'Assignment ID'), C('Employee_ID', 'Employee ID'), C('_empName', 'Employee'), C('_dept', 'Department'), C('Device_ID', 'Device ID'), C('_asset', 'Asset Tag'), C('_devType', 'Device Type'), C('_brandModel', 'Brand / Model'), C('_ownership', 'Ownership', 'ownership'), C('Issue_Date', 'Issue Date', 'date'), C('Assignment_Status', 'Assignment Status', 'status'), C('Return_Date', 'Return Date', 'date')];
+    const asgCols = [C('Assignment_ID', 'Assignment ID'), C('Employee_ID', 'Employee ID'), C('_empName', 'Employee'), C('_dept', 'Department'), C('Device_ID', 'Device ID'), C('_asset', 'Asset Tag'), C('_office', 'Device Office'), C('_empOffice', 'Employee Office'), C('_devType', 'Device Type'), C('_brandModel', 'Brand / Model'), C('_ownership', 'Ownership', 'ownership'), C('Issue_Date', 'Issue Date', 'date'), C('Assignment_Status', 'Assignment Status', 'status'), C('Return_Date', 'Return Date', 'date')];
 
     if (key === 'allocation') {
       const open = aRows.filter(function (a) { return Rules.isOpen(a) && asgOk(a, flt, 'Issue_Date'); });
@@ -1120,7 +1199,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         return asgOk(Object.assign({}, r, { Assignment_Status: r._assignmentStatus }), Object.assign({}, flt, { assignmentStatus: 'all' }), null) && inRange(r.Physical_Return_Date, flt);
       }).sort(function (a, b) { return compare(b.Physical_Return_Date, a.Physical_Return_Date) || compare(b.Return_ID, a.Return_ID); });
       return {
-        columns: [C('Return_ID', 'Return ID'), C('Assignment_ID', 'Assignment ID'), C('_empName', 'Employee'), C('_dept', 'Department'), C('Device_ID', 'Device ID'), C('_asset', 'Asset Tag'), C('_devType', 'Device Type'), C('Issue_Date', 'Device Allocated Date', 'date'), C('Physical_Return_Date', 'Return Date', 'date'), C('Condition_At_Return', 'Condition at Return'), C('Accessories_Returned', 'Accessories Returned'), C('Missing_Items', 'Missing Items'), C('Received_By', 'Received By'), C('Remarks', 'Remarks')],
+        columns: [C('Return_ID', 'Return ID'), C('Assignment_ID', 'Assignment ID'), C('_empName', 'Employee'), C('_dept', 'Department'), C('Device_ID', 'Device ID'), C('_asset', 'Asset Tag'), C('Office', 'Received At Office'), C('_devType', 'Device Type'), C('Issue_Date', 'Device Allocated Date', 'date'), C('Physical_Return_Date', 'Return Date', 'date'), C('Condition_At_Return', 'Condition at Return'), C('Accessories_Returned', 'Accessories Returned'), C('Missing_Items', 'Missing Items'), C('Received_By', 'Received By'), C('Remarks', 'Remarks')],
         rows: rows
       };
     }
@@ -1393,6 +1472,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   const COLORS = {
     status: { 'Available': '#2E8B6A', 'Assigned': '#3A62B0', 'Under Repair': '#D9A02B', 'Retired': '#98A2B0', 'Lost': '#C4473F' },
     ownership: { 'Owned': '#17566B', 'Rented': '#8B7BC0' },
+    office: { 'Higher.study Pune': '#2F6F85', 'Higher.study Odisha': '#8B7BC0', 'ADA Tech Solutions': '#D9A02B', 'Unassigned': '#98A2B0' },
     bar: '#2F6F85', barHover: '#17566B', fallback: ['#2F6F85', '#8B7BC0', '#D9A02B', '#98A2B0', '#C4473F', '#2E8B6A']
   };
   const registry = {};
@@ -1462,6 +1542,50 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     return true;
   }
 
+  /** Draws the value above every bar of every dataset (zeros are left blank to keep grouped charts readable). */
+  const valueLabelsAll = {
+    id: 'valueLabelsAll',
+    afterDatasetsDraw: function (chart) {
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.font = '600 11px ' + (getComputedStyle(document.body).fontFamily || 'sans-serif');
+      ctx.fillStyle = cssVar('--ink', '#18212B'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      chart.data.datasets.forEach(function (ds, di) {
+        chart.getDatasetMeta(di).data.forEach(function (bar, i) { const v = ds.data[i]; if (v) ctx.fillText(String(v), bar.x, bar.y - 4); });
+      });
+      ctx.restore();
+    }
+  };
+
+  /** Grouped bar chart: one group per label, one bar per dataset ({ label, data, color }). onSelect(label) fires on a click. */
+  function multi(canvasId, labels, datasets, opt) {
+    destroy(canvasId);
+    opt = opt || {};
+    const canvas = document.getElementById(canvasId);
+    const total = datasets.reduce(function (s, d) { return s + d.data.reduce(function (a, n) { return a + n; }, 0); }, 0);
+    if (!canvas || !ready() || !labels.length || !total) return false;
+    const unit = opt.unit || 'device';
+    registry[canvasId] = new Chart(canvas, {
+      type: 'bar',
+      data: { labels: labels, datasets: datasets.map(function (d, k) { return { label: d.label, data: d.data, backgroundColor: d.color || COLORS.fallback[k % COLORS.fallback.length], borderRadius: 4, maxBarThickness: 44 }; }) },
+      options: {
+        responsive: true, maintainAspectRatio: false, layout: { padding: { top: 22 } },
+        plugins: {
+          legend: { display: datasets.length > 1, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'rectRounded', padding: 12, color: cssVar('--ink-2', '#4A5565'), font: { size: 12 } } },
+          tooltip: { callbacks: { label: function (c) { return c.dataset.label + ': ' + c.parsed.y + ' ' + unit + (c.parsed.y === 1 ? '' : 's'); }, afterLabel: function () { return opt.onSelect ? 'Click to view this office' : ''; } } }
+        },
+        scales: {
+          x: { title: { display: !!opt.xTitle, text: opt.xTitle || '', color: cssVar('--muted', '#6B7686') }, grid: { display: false }, ticks: { autoSkip: false, maxRotation: 40, minRotation: 0, color: cssVar('--ink-2', '#4A5565') } },
+          y: { beginAtZero: true, title: { display: !!opt.yTitle, text: opt.yTitle || '', color: cssVar('--muted', '#6B7686') }, ticks: { precision: 0, color: cssVar('--muted', '#6B7686') }, grid: { color: cssVar('--line-2', '#EEF1F4') }, grace: '8%' }
+        },
+        onClick: function (e, els, chart) { if (els.length && opt.onSelect) opt.onSelect(chart.data.labels[els[0].index]); },
+        onHover: function (e, els) { e.native.target.style.cursor = els.length && opt.onSelect ? 'pointer' : 'default'; }
+      },
+      plugins: [valueLabelsAll]
+    });
+    return true;
+  }
+
   /** Doughnut chart with counts + percentages in the legend and tooltip. */
   function doughnut(canvasId, items, colorMap, onSelect) {
     destroy(canvasId);
@@ -1502,7 +1626,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     return true;
   }
 
-  g.Charts = { COLORS: COLORS, bar: bar, doughnut: doughnut, destroy: destroy, destroyAll: destroyAll, ready: ready, count: function () { return Object.keys(registry).length; } };
+  g.Charts = { COLORS: COLORS, bar: bar, multi: multi, doughnut: doughnut, destroy: destroy, destroyAll: destroyAll, ready: ready, count: function () { return Object.keys(registry).length; } };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -1900,6 +2024,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       UI.field({ name: 'Model', label: 'Model', required: true, value: v.Model, placeholder: 'e.g. Latitude 5440' }) +
       UI.field({ name: 'Serial_Number', label: 'Serial Number', value: v.Serial_Number, hint: 'Optional, but must be unique when entered.' }) +
       '<div class="form-grid three span-2">' +
+      UI.field({ name: 'Office', label: 'Office', type: 'select', required: !editing || !!(d && d.Office), value: v.Office, options: lists['Office'], placeholder: (editing && !(d && d.Office)) ? 'Unassigned (not set yet)' : 'Select office', hint: editing ? 'Moving a device only changes its current office. Past allotments and returns keep theirs.' : 'The office that holds this device.' }) +
       UI.field({ name: 'Device_Ownership_Type', label: 'Device Ownership Type', type: 'select', required: true, value: v.Device_Ownership_Type, options: lists['Ownership Types'], placeholder: false }) +
       UI.field({ name: 'Device_Condition', label: 'Device Condition', type: 'select', required: true, value: v.Device_Condition, options: lists['Device Conditions'], placeholder: false }) +
       UI.field({ name: 'Current_Status', label: 'Current Status', type: 'select', required: true, value: v.Current_Status, options: statusOpts, placeholder: false, disabled: !!open }) + '</div>' +
@@ -1918,7 +2043,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       validate: function (data) {
         const dd = Object.assign({}, data);
         if (open) dd.Current_Status = 'Assigned';
-        return Validation.device(dd, { devices: App.data.devices, lists: lists, editingId: editing ? deviceId : null, hasOpenAssignment: !!open });
+        return Validation.device(dd, { devices: App.data.devices, lists: lists, editingId: editing ? deviceId : null, hasOpenAssignment: !!open, officeRequired: editing ? !!(d && d.Office) : true });
       },
       submit: function (data) { if (open) data.Current_Status = 'Assigned'; return editing ? DataService.updateDevice(data) : DataService.saveDevice(data); },
       success: function (data, r) { return editing ? 'Device ' + r.Device_ID + ' updated. All views now show the new details.' : 'Device ' + r.Device_ID + ' (' + r.Asset_Tag + ') added to inventory.' + (r.Current_Status === 'Available' ? ' It is ready for allotment.' : ''); },
@@ -1952,6 +2077,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       UI.field({ name: 'Work_Email', label: 'Work Email', type: 'email', required: true, value: v.Work_Email, placeholder: 'name' + MockData.EMAIL_DOMAIN }) +
       UI.field({ name: 'Department', label: 'Department', type: 'select', required: true, value: v.Department, options: lists['Departments'], placeholder: 'Select department' }) +
       UI.field({ name: 'Designation', label: 'Designation', type: 'select', required: true, value: v.Designation, options: lists['Designations'], placeholder: 'Select designation' }) +
+      UI.field({ name: 'Office', label: 'Office', type: 'select', required: !editing || !!(e && e.Office), value: v.Office, options: lists['Office'], placeholder: (editing && !(e && e.Office)) ? 'Unassigned (not set yet)' : 'Select office' }) +
       UI.field({ name: 'Manager_Name', label: 'Manager Name', value: v.Manager_Name }) +
       UI.field({ name: 'Joining_Date', label: 'Joining Date', type: 'date', required: true, value: v.Joining_Date }) +
       UI.field({ name: 'Employment_Status', label: 'Employment Status', type: 'select', required: true, value: v.Employment_Status, options: lists['Employment Statuses'], placeholder: false }) +
@@ -1960,7 +2086,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     formModal({
       title: editing ? 'Edit employee' : 'Add Employee', subtitle: editing ? E(v.Employee_Name) : 'Create an employee record so devices can be allotted.', size: 'lg', body: body,
       submitText: editing ? 'Save changes' : 'Add Employee', busyText: 'Saving employee…',
-      validate: function (data) { return Validation.employee(data, { employees: App.data.employees, lists: lists, editingId: editing ? empId : null }); },
+      validate: function (data) { return Validation.employee(data, { employees: App.data.employees, lists: lists, editingId: editing ? empId : null, officeRequired: editing ? !!(e && e.Office) : true }); },
       submit: function (data) { return editing ? DataService.updateEmployee(data) : DataService.saveEmployee(data); },
       success: function (data, r) { return editing ? r.Employee_Name + ' updated.' : r.Employee_Name + ' (' + r.Employee_ID + ') added.'; },
       onMount: function (api, form) {
@@ -1973,11 +2099,11 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   /* ----------------------------------------------------------- ALLOT DEVICE */
   function empInfo(e) {
     if (!e) return '<p class="muted small">Select an employee to see their details.</p>';
-    return UI.kv([['Employee Name', e.Employee_Name], ['Employee ID', e.Employee_ID], ['Department', e.Department], ['Designation', e.Designation], UI.kvRow('Employment Status', B(e.Employment_Status))]);
+    return UI.kv([['Employee Name', e.Employee_Name], ['Employee ID', e.Employee_ID], ['Department', e.Department], ['Designation', e.Designation], ['Office', (e.Office || 'Unassigned')], UI.kvRow('Employment Status', B(e.Employment_Status))]);
   }
   function devInfo(d) {
     if (!d) return '<p class="muted small">Select a device to see its details.</p>';
-    return UI.kv([['Device ID', d.Device_ID], ['Asset Tag', d.Asset_Tag], ['Device Type', d.Device_Type], ['Brand', d.Brand], ['Model', d.Model], ['Serial Number', d.Serial_Number], UI.kvRow('Ownership', B(d.Device_Ownership_Type) + (d.Device_Ownership_Type === 'Rented' ? ' <span class="muted small">' + E(d.Rental_Vendor) + '</span>' : ''))]);
+    return UI.kv([['Device ID', d.Device_ID], ['Asset Tag', d.Asset_Tag], ['Device Type', d.Device_Type], ['Brand', d.Brand], ['Model', d.Model], ['Serial Number', d.Serial_Number], ['Office', (d.Office || 'Unassigned')], UI.kvRow('Ownership', B(d.Device_Ownership_Type) + (d.Device_Ownership_Type === 'Rented' ? ' <span class="muted small">' + E(d.Rental_Vendor) + '</span>' : ''))]);
   }
 
   function allotForm(preset) {
@@ -1999,6 +2125,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       UI.field({ name: 'Issue_Date', label: 'Issue Date', type: 'date', required: true, value: t }) +
       UI.field({ name: 'Issued_By', label: 'Issued By', required: true, value: adminName() }) +
       UI.field({ name: 'Condition_At_Issue', label: 'Condition at Issue', type: 'select', required: true, value: 'Good', options: lists['Device Conditions'], placeholder: false }) +
+      UI.field({ name: 'Office', label: 'Device Office', type: 'select', value: '', options: lists['Office'], placeholder: 'Unassigned (device has no office)', hint: 'Taken from the device. Employees from any office can receive it.' }) +
       UI.field({ name: 'Accessories_Issued', label: 'Accessories Issued', value: '', placeholder: 'e.g. Charger, laptop bag' }) +
       UI.field({ name: 'Remarks', label: 'Remarks', type: 'textarea', rows: 2, span: 'full' }) + '</div>';
 
@@ -2016,10 +2143,12 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       submit: function (data) { return DataService.createAssignment(data); },
       success: function (data, r) { const d = idx.dev[data.Device_ID], e = idx.emp[data.Employee_ID]; return d.Asset_Tag + ' allotted to ' + e.Employee_Name + '. Assignment ' + r.Assignment_ID + ' created.'; },
       onMount: function (api, form) {
-        const es = form.querySelector('[name=Employee_ID]'), ds = form.querySelector('[name=Device_ID]'), cond = form.querySelector('[name=Condition_At_Issue]');
+        const es = form.querySelector('[name=Employee_ID]'), ds = form.querySelector('[name=Device_ID]'), cond = form.querySelector('[name=Condition_At_Issue]'), off = form.querySelector('[name=Office]');
+        const syncOff = function (d) { off.value = d && d.Office ? d.Office : ''; off.disabled = !!(d && d.Office); };
+        syncOff(null);
         es.addEventListener('change', function () { api.el.querySelector('#emp-info').innerHTML = empInfo(idx.emp[es.value]); });
-        ds.addEventListener('change', function () { const d = idx.dev[ds.value]; api.el.querySelector('#dev-info').innerHTML = devInfo(d); if (d) cond.value = d.Device_Condition; });
-        if (preset.deviceId) { const d = idx.dev[preset.deviceId]; if (d) cond.value = d.Device_Condition; }
+        ds.addEventListener('change', function () { const d = idx.dev[ds.value]; api.el.querySelector('#dev-info').innerHTML = devInfo(d); if (d) cond.value = d.Device_Condition; syncOff(d); });
+        if (preset.deviceId) { const d = idx.dev[preset.deviceId]; if (d) cond.value = d.Device_Condition; syncOff(d); }
       }
     });
   }
@@ -2052,6 +2181,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       UI.field({ name: 'Accessories_Returned', label: 'Accessories Returned', placeholder: 'Optional, e.g. Charger, laptop bag' }) +
       UI.field({ name: 'Missing_Items', label: 'Missing Items', placeholder: 'Optional. Leave empty if nothing is missing' }) +
       UI.field({ name: 'Received_By', label: 'Received By', required: true, value: adminName() }) +
+      UI.field({ name: 'Office', label: 'Office where received', type: 'select', required: true, value: dev0 && dev0.Office ? dev0.Office : '', options: L()['Office'], placeholder: 'Select the receiving office', hint: 'The device\'s current office becomes this office. The earlier allotment keeps its own office.' }) +
       UI.field({ name: 'Remarks', label: 'Remarks', type: 'textarea', rows: 2, span: 'full' }) + '</div>';
     formModal({
       title: 'Mark as Returned', subtitle: a0 ? E(asgLabel(a0)) : 'Record the device the employee has just handed back.', size: 'lg', body: body, submitText: 'Confirm Return', busyText: 'Saving return…',
@@ -2060,6 +2190,11 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       success: function (d, r) { return 'Device marked as returned successfully. ' + ((idx.dev[r.Device_ID] || {}).Asset_Tag || r.Device_ID) + ' is now ' + r._deviceStatus + '.'; },
       reopen: reopen,
       onMount: function (api, form) {
+        (function () {
+          const sel = form.querySelector('[name=Assignment_ID]'), off = form.querySelector('[name=Office]');
+          const fill = function () { const a = idx.asg[sel.value], dv = a ? idx.dev[a.Device_ID] : null; if (off && !off.value && dv && dv.Office) off.value = dv.Office; };
+          fill(); sel.addEventListener('change', function () { if (off) off.value = ''; fill(); });
+        })();
         const s = form.querySelector('[name=Assignment_ID]'), cond = form.querySelector('[name=Condition_At_Return]'), after = form.querySelector('[data-field=Device_Status_After]'), note = form.querySelector('#cond-note');
         const syncCond = function () {
           const c = cond.value;
@@ -2106,7 +2241,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     const p = Rules.deviceProfile(App.data, devId, today());
     if (!p) { UI.toast('Device not found.', 'error'); return; }
     const d = p.device, cur = p.current;
-    const info = UI.kv([['Device ID', d.Device_ID], ['Asset Tag', d.Asset_Tag], ['Device Type', d.Device_Type], ['Brand', d.Brand], ['Model', d.Model], ['Serial Number', d.Serial_Number], UI.kvRow('Ownership', B(d.Device_Ownership_Type)),
+    const info = UI.kv([['Device ID', d.Device_ID], ['Asset Tag', d.Asset_Tag], ['Device Type', d.Device_Type], ['Brand', d.Brand], ['Model', d.Model], ['Serial Number', d.Serial_Number], ['Office', (d.Office || 'Unassigned')], UI.kvRow('Ownership', B(d.Device_Ownership_Type)),
       d.Device_Ownership_Type === 'Rented' ? ['Rental Vendor', d.Rental_Vendor] : null, d.Device_Ownership_Type === 'Rented' ? ['Rental Period', Dates.display(d.Rental_Start_Date) + ' to ' + Dates.display(d.Rental_End_Date)] : null,
       UI.kvRow('Condition', B(d.Device_Condition)), UI.kvRow('Current Status', B(d.Current_Status)), ['Notes', d.Notes, false]]);
     const current = cur
@@ -2126,7 +2261,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     const p = Rules.employeeProfile(App.data, empId, today());
     if (!p) { UI.toast('Employee not found.', 'error'); return; }
     const e = p.employee;
-    const profile = UI.kv([['Employee ID', e.Employee_ID], ['Name', e.Employee_Name], ['Work Email', e.Work_Email], ['Department', e.Department], ['Designation', e.Designation], ['Manager', e.Manager_Name], ['Joining Date', Dates.display(e.Joining_Date)], UI.kvRow('Employment Status', B(e.Employment_Status)), ['Last Working Date', Dates.display(e.Last_Working_Date)], ['Notes', e.Notes]]);
+    const profile = UI.kv([['Employee ID', e.Employee_ID], ['Name', e.Employee_Name], ['Work Email', e.Work_Email], ['Department', e.Department], ['Designation', e.Designation], ['Office', (e.Office || 'Unassigned')], ['Manager', e.Manager_Name], ['Joining Date', Dates.display(e.Joining_Date)], UI.kvRow('Employment Status', B(e.Employment_Status)), ['Last Working Date', Dates.display(e.Last_Working_Date)], ['Notes', e.Notes]]);
     const currentHtml = UI.table({ id: 'emp-cur', noPaging: true, noSort: true, compact: true, rows: p.current, emptyHtml: UI.empty({ title: 'No devices held', text: e.Employee_Name + ' has no devices right now.', icon: 'laptop' }),
       columns: [{ key: '_asset', label: 'Asset Tag', render: function (r) { return link('open-assignment', r.Assignment_ID, r._asset); } }, { key: '_devType', label: 'Type' }, { key: '_brandModel', label: 'Brand / Model' }, { key: 'Issue_Date', label: 'Issued', type: 'date' }, { key: 'Assignment_Status', label: 'Status', render: function (r) { return UI.asgStatus(r); } }, { key: 'act', label: '', render: function (r) { return '<button class="btn btn-sm" type="button" data-action="mark-returned" data-id="' + E(r.Assignment_ID) + '">Mark as Returned</button>'; } }] });
     const panels = [{ key: 'profile', label: 'Profile', html: profile }, { key: 'current', label: 'Current devices (' + p.current.length + ')', html: currentHtml }, { key: 'history', label: 'Allotment & return history', html: histTable(p.history, false) + (p.returns.length ? '<h3 class="sub-h spaced">Return records</h3>' + returnsMini(p.returns) : '') }];
@@ -2146,14 +2281,14 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
 
   function assignmentDetail(asgId, ctx) {
     ctx = ctx || {};
-    const row = Rules.assignmentRows(App.data, today()).filter(function (a) { return a.Assignment_ID === asgId; })[0];
+    const row = Rules.assignmentRows(App.data, today(), '').filter(function (a) { return a.Assignment_ID === asgId; })[0];
     if (!row) { UI.toast('Assignment not found.', 'error'); return; }
-    const idx = ix(), dev = idx.dev[row.Device_ID] || {}, rets = Rules.returnRows(App.data, today()).filter(function (r) { return r.Assignment_ID === asgId; });
+    const idx = ix(), dev = idx.dev[row.Device_ID] || {}, rets = Rules.returnRows(App.data, today(), '').filter(function (r) { return r.Assignment_ID === asgId; });
     const reopen = ctx.reopen || function () { assignmentDetail(asgId, ctx); };
     const open = Rules.isOpen(row);
     const body = UI.kv([['Assignment ID', row.Assignment_ID], UI.kvRow('Status', UI.asgStatus(row)),
       UI.kvRow('Employee', link('open-employee', row.Employee_ID, row._empName) + ' <span class="muted small">' + E(row._dept) + '</span>'), UI.kvRow('Device', link('open-device', row.Device_ID, row._asset) + ' <span class="muted small">' + E(row._brandModel) + '</span>'),
-      ['Device Type', row._devType], UI.kvRow('Ownership', B(row._ownership)), ['Device Allocated Date', Dates.display(row.Issue_Date)], ['Issued By', row.Issued_By], ['Condition at Issue', row.Condition_At_Issue], ['Accessories Issued', row.Accessories_Issued || 'None'],
+      ['Device Type', row._devType], ['Device Office', (row._office || 'Unassigned')], ['Employee Office', (row._empOffice || 'Unassigned')], UI.kvRow('Ownership', B(row._ownership)), ['Device Allocated Date', Dates.display(row.Issue_Date)], ['Issued By', row.Issued_By], ['Condition at Issue', row.Condition_At_Issue], ['Accessories Issued', row.Accessories_Issued || 'None'],
       ['Return Date', Dates.display(row.Return_Date)], ['Return ID', row.Return_ID || '—'], ['Device status now', dev.Current_Status], ['Remarks', row.Remarks || '—']]) +
       '<h3 class="sub-h spaced">Return record</h3>' + (rets.length ? returnsMini(rets) : '<p class="muted small">This device has not been returned yet.</p>');
     const api = UI.modal({
@@ -2178,11 +2313,11 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   }
 
   function returnDetail(returnId) {
-    const r = Rules.returnRows(App.data, today()).filter(function (x) { return x.Return_ID === returnId; })[0];
+    const r = Rules.returnRows(App.data, today(), '').filter(function (x) { return x.Return_ID === returnId; })[0];
     if (!r) { UI.toast('Return record not found.', 'error'); return; }
     const body = UI.kv([['Return ID', r.Return_ID], ['Assignment', r.Assignment_ID], UI.kvRow('Employee', link('open-employee', r.Employee_ID, r._empName)), UI.kvRow('Device', link('open-device', r.Device_ID, r._asset) + ' <span class="muted small">' + E(r._devType) + '</span>'),
       ['Device Allocated Date', Dates.display(r.Issue_Date)], ['Return Date', Dates.display(r.Physical_Return_Date)], UI.kvRow('Condition at Return', r.Condition_At_Return ? B(r.Condition_At_Return) : '—'),
-      ['Accessories Returned', r.Accessories_Returned || '—'], ['Missing Items', r.Missing_Items || 'None'], ['Received By', r.Received_By || '—'], ['Remarks', r.Remarks || '—']]);
+      ['Accessories Returned', r.Accessories_Returned || '—'], ['Missing Items', r.Missing_Items || 'None'], ['Received By', r.Received_By || '—'], ['Received at Office', (r.Office || 'Unassigned')], ['Remarks', r.Remarks || '—']]);
     const api = UI.modal({ title: 'Return ' + r.Return_ID, subtitle: E(r._empName) + ' — ' + E(r._asset), size: 'lg', body: body,
       footer: '<button class="btn" type="button" data-modal-close>Close</button><span class="spacer"></span><button class="btn" type="button" data-view-asg>View assignment</button>' });
     api.el.querySelector('[data-view-asg]').addEventListener('click', function () { api.close(); assignmentDetail(r.Assignment_ID); });
@@ -2242,14 +2377,18 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     },
     load: async function () { App.dash = await DataService.getDashboardData(); },
     render: function (c) {
-      const d = App.dash, t = d.totals, active = App.data.employees.filter(function (e) { return e.Employment_Status === 'Active'; }).length;
+      const d = App.dash, t = d.totals, active = t.activeEmployees;
       const pct = function (n) { return t.total ? Math.round((n / t.total) * 100) + '% of inventory' : '—'; };
       const cards = [
         { k: 'total', label: 'Total Devices', v: t.total, sub: 'Registered device records' },
         { k: 'assigned', label: 'Assigned Devices', v: t.assigned, sub: pct(t.assigned) },
         { k: 'available', label: 'Available Devices', v: t.available, sub: 'Ready for allotment' },
-        { k: 'withDevices', label: 'Employees with Devices', v: t.employeesWithDevices, sub: 'of ' + App.data.employees.length + ' employees (' + active + ' active)' },
-        { k: 'pending', label: 'Pending Returns', v: t.pendingReturns, sub: 'Active, not yet returned', tone: t.pendingReturns ? 'amber' : '' }
+        { k: 'withDevices', label: 'Employees with Devices', v: t.employeesWithDevices, sub: 'of ' + t.employees + ' employees (' + active + ' active)' },
+        { k: 'pending', label: 'Pending Returns', v: t.pendingReturns, sub: 'Active, not yet returned', tone: t.pendingReturns ? 'amber' : '' },
+        { k: 'employees', label: 'Total Employees', v: t.employees, sub: 'Registered employee records' },
+        { k: 'owned', label: 'Company-Owned Devices', v: t.owned, sub: (t.total ? Math.round(t.owned * 100 / t.total) : 0) + '% of devices' },
+        { k: 'rented', label: 'Rented Devices', v: t.rented, sub: (t.total ? Math.round(t.rented * 100 / t.total) : 0) + '% of devices' },
+        { k: 'returned', label: 'Returned Devices', v: t.returned, sub: 'Physical returns recorded' }
       ];
       const metric = cards.map(function (m) { return '<button type="button" class="metric ' + (m.tone ? 'metric-' + m.tone : '') + '" data-action="metric" data-id="' + m.k + '"><span class="metric-label">' + E(m.label) + '</span><span class="metric-value">' + m.v + '</span><span class="metric-sub">' + E(m.sub) + '</span></button>'; }).join('');
       const chartCard = function (id, title, sub, wide) { return '<section class="card chart-card' + (wide ? ' wide' : '') + '"><div class="card-head"><div><h2>' + title + '</h2><p class="muted small">' + sub + '</p></div></div><div class="chart-area" id="' + id + '-area"><div class="chart-scroll"><div class="chart-box" id="' + id + '-box"><canvas id="' + id + '" role="img" aria-label="' + E(title) + '"></canvas></div></div></div></section>'; };
@@ -2271,16 +2410,31 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
 
       c.innerHTML = '<div class="metrics">' + metric + '</div>' +
         '<div class="chart-grid">' + chartCard('chart-type', 'Devices by Type', 'Click a bar to open that type in Device Inventory.', true) + chartCard('chart-own', 'Owned vs Rented', 'Click a segment or legend item to filter.') + chartCard('chart-status', 'Device Status Distribution', 'Click a segment or legend item to filter.') + '</div>' +
+        '<div class="office-section"><h2>Office overview</h2><p class="muted small">' + (Rules.officeFilter === '__none__' ? 'Records with no office yet.' : (Rules.officeFilter ? E(Rules.officeFilter) + ' only.' : 'All offices combined, compared office by office. Click an office bar to view just that office.')) + '</p></div>' +
+        '<div class="chart-grid">' + chartCard('chart-off-devices', 'Total Devices by Office', 'Every registered device, by its current office.', true) + chartCard('chart-off-avail', 'Available vs Allotted', 'Devices ready to allot and devices with an employee.') +
+        chartCard('chart-off-own', 'Company-Owned vs Rented', 'Ownership of the devices at each office.') + chartCard('chart-off-emp', 'Employees by Office', 'Employee records at each office.') + chartCard('chart-off-ret', 'Device Returns by Office', 'Returns received at each office.') +
+        chartCard('chart-off-types', 'Device Types by Office', 'How many of each device type each office holds.', true) + '</div>' +
         '<div class="tables-grid">' + tableCard('Recent Allotments', 'allotment', 'a', allot) + tableCard('Recent Returns', 'returns', 'r', rets) + '</div>' +
         '<div class="tables-grid one">' + tableCard('Outstanding Device Allotments', 'allotment', 'p', pend, 'view-active') + '</div>';
 
       // Charts. Each falls back to a clear message if there is no data or Chart.js did not load.
       const fallback = function (id, msg, title) { const a = $(id + '-area'); if (a) a.innerHTML = UI.empty({ title: title || 'Not enough data', text: msg, icon: 'chart' }); };
-      if (!Charts.ready()) { ['chart-type', 'chart-own', 'chart-status'].forEach(function (id) { fallback(id, 'Chart.js could not be loaded. Check your internet connection and reload.', 'Charts unavailable'); }); return; }
+      if (!Charts.ready()) { ['chart-type', 'chart-own', 'chart-status', 'chart-off-devices', 'chart-off-avail', 'chart-off-own', 'chart-off-emp', 'chart-off-ret', 'chart-off-types'].forEach(function (id) { fallback(id, 'Chart.js could not be loaded. Check your internet connection and reload.', 'Charts unavailable'); }); return; }
       const tb = $('chart-type-box'); if (tb) tb.style.minWidth = Math.max(0, d.byType.length * 62) + 'px';
       if (!Charts.bar('chart-type', d.byType, function (label) { App.go('inventory', { type: label }); })) fallback('chart-type', 'Add devices to see how many of each type you have.');
       if (!Charts.doughnut('chart-own', d.byOwnership, Charts.COLORS.ownership, function (label) { App.go('inventory', { ownership: label }); })) fallback('chart-own', 'Add devices to compare owned and rented.');
       if (!Charts.doughnut('chart-status', d.byStatus, Charts.COLORS.status, function (label) { App.go('inventory', { status: label }); })) fallback('chart-status', 'Add devices to see the status breakdown.');
+      const od = d.offices, OC = Charts.COLORS.office, none = function () { return 'No records for this view yet.'; };
+      const vals = function (arr) { return arr.map(function (x) { return x.count; }); };
+      const offSelect = function (label) { App.setOffice(label === 'Unassigned' ? '__none__' : label); };
+      const offColors = od.labels.map(function (l) { return OC[l]; });
+      if (!Charts.multi('chart-off-devices', od.labels, [{ label: 'Devices', data: vals(od.devices), color: Charts.COLORS.bar }], { xTitle: 'Office', yTitle: 'Number of Devices', unit: 'device', onSelect: offSelect })) fallback('chart-off-devices', none());
+      if (!Charts.multi('chart-off-avail', od.labels, [{ label: 'Available', data: vals(od.available), color: Charts.COLORS.status['Available'] }, { label: 'Allotted', data: vals(od.allotted), color: Charts.COLORS.status['Assigned'] }], { yTitle: 'Number of Devices', unit: 'device', onSelect: offSelect })) fallback('chart-off-avail', none());
+      if (!Charts.multi('chart-off-own', od.labels, [{ label: 'Company-owned', data: vals(od.owned), color: Charts.COLORS.ownership['Owned'] }, { label: 'Rented', data: vals(od.rented), color: Charts.COLORS.ownership['Rented'] }], { yTitle: 'Number of Devices', unit: 'device', onSelect: offSelect })) fallback('chart-off-own', none());
+      if (!Charts.multi('chart-off-emp', od.labels, [{ label: 'Employees', data: vals(od.employees), color: Charts.COLORS.bar }], { yTitle: 'Number of Employees', unit: 'employee', onSelect: offSelect })) fallback('chart-off-emp', none());
+      if (!Charts.multi('chart-off-ret', od.labels, [{ label: 'Returns', data: vals(od.returns), color: '#2E8B6A' }], { yTitle: 'Number of Returns', unit: 'return', onSelect: offSelect })) fallback('chart-off-ret', none());
+      if (!Charts.multi('chart-off-types', od.types.map(function (t) { return t.label; }), od.labels.map(function (l) { return { label: l, color: OC[l], data: od.types.map(function (t) { return t.perOffice.filter(function (p) { return p.label === l; })[0].count; }) }; }), { xTitle: 'Device Type', yTitle: 'Number of Devices', unit: 'device' })) fallback('chart-off-types', none());
+      void offColors;
     }
   };
 
@@ -2303,6 +2457,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         { key: 'Work_Email', label: 'Work Email' }, { key: 'Department', label: 'Department' }, { key: 'Designation', label: 'Designation' }, { key: 'Manager_Name', label: 'Manager' },
         { key: 'Joining_Date', label: 'Joining Date', type: 'date' }, { key: 'Employment_Status', label: 'Employment Status', render: function (r) { return B(r.Employment_Status); } },
         { key: '_activeDevices', label: 'Devices Held', cls: 'num', render: function (r) { return r._activeDevices ? '<strong>' + r._activeDevices + '</strong>' : '<span class="muted">0</span>'; } },
+        { key: 'Office', label: 'Office', render: function (r) { return r.Office ? E(r.Office) : '<span class="muted">Unassigned</span>'; } },
         { key: 'act', label: 'Actions', sortable: false, render: function (r) { return '<div class="row-actions">' + iconBtn('open-employee', r.Employee_ID, 'eye', 'View details') + iconBtn('edit-employee', r.Employee_ID, 'edit', 'Edit employee') + '</div>'; } }
       ] }));
     }
@@ -2328,6 +2483,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         { key: 'Device_Ownership_Type', label: 'Ownership', render: function (r) { return B(r.Device_Ownership_Type) + (r.Device_Ownership_Type === 'Rented' && r.Rental_Vendor ? '<div class="muted small">' + E(r.Rental_Vendor) + '</div>' : ''); } },
         { key: 'Device_Condition', label: 'Condition', render: function (r) { return B(r.Device_Condition); } }, { key: 'Current_Status', label: 'Current Status', render: function (r) { return B(r.Current_Status); } },
         { key: '_holderName', label: 'Assigned Employee', render: function (r) { return r._holderName ? linkBtn('open-assignment', r._assignmentId, r._holderName) : '<span class="muted">—</span>'; } },
+        { key: 'Office', label: 'Office', render: function (r) { return r.Office ? E(r.Office) : '<span class="muted">Unassigned</span>'; } },
         { key: 'act', label: 'Actions', sortable: false, render: function (r) { return '<div class="row-actions">' + iconBtn('open-device', r.Device_ID, 'eye', 'View details') + iconBtn('edit-device', r.Device_ID, 'edit', 'Edit device') + (r._assignmentId ? iconBtn('open-assignment', r._assignmentId, 'file', 'View current assignment') : (r.Current_Status === 'Available' ? iconBtn('allot-device', r.Device_ID, 'swap', 'Allot this device') : '')) + iconBtn('device-history', r.Device_ID, 'clock', 'View allotment history') + '</div>'; } }
       ] }));
     }
@@ -2356,6 +2512,8 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         { key: 'Issue_Date', label: 'Device Allocated Date', type: 'date' }, { key: 'Issued_By', label: 'Issued By' },
         { key: 'Assignment_Status', label: 'Assignment Status', render: function (r) { return UI.asgStatus(r); } },
         { key: 'Return_Date', label: 'Return Date', type: 'date' },
+        { key: '_office', label: 'Device Office', render: function (r) { return r._office ? E(r._office) : '<span class=\"muted\">Unassigned</span>'; } },
+        { key: '_empOffice', label: 'Employee Office', render: function (r) { return r._empOffice ? E(r._empOffice) : '<span class=\"muted\">Unassigned</span>'; } },
         { key: 'act', label: 'Actions', sortable: false, render: function (r) {
           return '<div class="row-actions wrap">' + iconBtn('open-assignment', r.Assignment_ID, 'eye', 'View assignment') + (Rules.isOpen(r) ? textBtn('mark-returned', r.Assignment_ID, 'Mark as Returned', true) : '') + '</div>'; } }
       ] }));
@@ -2384,6 +2542,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         { key: 'Accessories_Returned', label: 'Accessories Returned', render: function (r) { return clip(r.Accessories_Returned); } },
         { key: 'Missing_Items', label: 'Missing Items', render: function (r) { return clip(r.Missing_Items); } },
         { key: 'Received_By', label: 'Received By' }, { key: 'Remarks', label: 'Remarks', render: function (r) { return clip(r.Remarks); } },
+        { key: 'Office', label: 'Received At', render: function (r) { return r.Office ? E(r.Office) : '<span class="muted">Unassigned</span>'; } },
         { key: 'act', label: 'Actions', sortable: false, render: function (r) { return '<div class="row-actions">' + iconBtn('open-return', r.Return_ID, 'eye', 'View return details') + iconBtn('open-assignment', r.Assignment_ID, 'file', 'View assignment') + '</div>'; } }
       ] }));
     }
@@ -2439,7 +2598,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     title: 'Settings', desc: 'Manage the dropdown options used across the dashboard.', defaults: {},
     actions: function () { return ''; },
     render: function (c) {
-      const order = ['Departments', 'Designations', 'Device Types', 'Brands', 'Device Conditions', 'Device Statuses', 'Ownership Types', 'Employment Statuses', 'Assignment Statuses'];
+      const order = ['Departments', 'Designations', 'Device Types', 'Brands', 'Device Conditions', 'Device Statuses', 'Ownership Types', 'Employment Statuses', 'Assignment Statuses', 'Office'];
       const total = order.reduce(function (n, k) { return n + App.data.lists[k].length; }, 0);
       const cards = order.map(function (name) {
         const locked = MockData.LOCKED_LISTS.indexOf(name) !== -1, prot = MockData.PROTECTED_VALUES[name] || [];
@@ -2519,6 +2678,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       const res = await Promise.all(jobs);
       if (my !== App._token) return;
       App.data = res[0];
+      renderOfficeBar();
       content.innerHTML = '';
       page.render(content);
       if (opts.silent) window.scrollTo(0, scrollY);
@@ -2611,7 +2771,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     'go': function (el) { App.go(el.dataset.id); },
     'retry': function () { App.render(); },
     'metric': function (el) {
-      const m = { total: ['inventory', {}], assigned: ['inventory', { status: 'Assigned' }], available: ['inventory', { status: 'Available' }], withDevices: ['employees', { devices: 'has' }], pending: ['allotment', { status: 'Active' }] }[el.dataset.id];
+      const m = { total: ['inventory', {}], assigned: ['inventory', { status: 'Assigned' }], available: ['inventory', { status: 'Available' }], withDevices: ['employees', { devices: 'has' }], pending: ['allotment', { status: 'Active' }], employees: ['employees', {}], owned: ['inventory', { ownership: 'Owned' }], rented: ['inventory', { ownership: 'Rented' }], returned: ['returns', {}] }[el.dataset.id];
       if (m) App.go(m[0], m[1]);
     },
     'toggle-sidebar': toggleSidebar,
@@ -2718,6 +2878,34 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     window.addEventListener('resize', debounce(function () { if (!window.matchMedia('(max-width: 900px)').matches) closeMobileNav(); }, 150));
   }
 
+  /* ----------------------------------------------------------- office filter (whole dashboard) */
+  const OFFICE_KEY = 'edm-office';
+  function loadOffice() { try { const v = window.sessionStorage.getItem(OFFICE_KEY); if (v !== null) Rules.officeFilter = v; } catch (e) { /* ignore */ } }
+  function renderOfficeBar() {
+    const bar = $('office-bar'), sel = $('office-select'), note = $('office-note');
+    if (!bar || !App.data) return;
+    const list = (App.data.lists && App.data.lists['Office']) || [];
+    if (!list.length) { bar.hidden = true; return; }
+    if (Rules.officeFilter && Rules.officeFilter !== '__none__' && list.indexOf(Rules.officeFilter) === -1) Rules.officeFilter = '';
+    bar.hidden = false;
+    sel.innerHTML = '<option value="">All Offices</option>' + list.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '<option value="__none__">Unassigned only</option>';
+    sel.value = Rules.officeFilter;
+    const u = Rules.unassignedCounts(App.data), total = u.devices + u.employees;
+    note.className = 'office-note' + (total ? ' has-unassigned' : '');
+    note.innerHTML = total
+      ? '<strong>Unassigned:</strong> ' + u.devices + ' device' + (u.devices === 1 ? '' : 's') + ', ' + u.employees + ' employee' + (u.employees === 1 ? '' : 's') + ' <span class="muted">· counted in All Offices, not in a single office</span>'
+      : 'Every device and employee has an office.';
+    note.title = total ? 'Records with no office yet are kept as Unassigned. An administrator can set the office by editing the record, or with Bulk Upload in update mode.' : '';
+  }
+  App.setOffice = function (v) {
+    const list = (App.data && App.data.lists && App.data.lists['Office']) || [];
+    if (v && v !== '__none__' && list.indexOf(v) === -1) v = '';
+    Rules.officeFilter = v || '';
+    try { window.sessionStorage.setItem(OFFICE_KEY, Rules.officeFilter); } catch (e) { /* ignore */ }
+    const q = searchInput && searchInput(); if (q) { q.value = ''; $('search-results').hidden = true; }
+    App.render({ silent: true });
+  };
+
   /* ----------------------------------------------------------- roles: public viewer / administrator */
   function initials(s) { return String(s || '?').replace(/[^A-Za-z0-9 ]/g, '').trim().split(/\s+/).map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase() || '?'; }
 
@@ -2785,8 +2973,10 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
   }
 
   function init() {
+    loadOffice();
     buildNav();
     bindEvents();
+    $('office-select').addEventListener('change', function (ev) { App.setOffice(ev.target.value); });
     if (DataService.isLive()) {
       initLive();
     } else {
