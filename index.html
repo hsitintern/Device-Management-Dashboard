@@ -620,14 +620,13 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       const e = {}, lists = ctx.lists || {};
       const others = (ctx.devices || []).filter(function (x) { return x.Device_ID !== ctx.editingId; });
 
-      if (req(e, d, 'Device_ID', 'Device ID') && others.some(function (x) { return norm(x.Device_ID) === norm(d.Device_ID); })) e.Device_ID = 'Device ID ' + d.Device_ID + ' already exists.';
+      if (has(d.Device_ID) && others.some(function (x) { return norm(x.Device_ID) === norm(d.Device_ID); })) e.Device_ID = 'Device ID ' + d.Device_ID + ' already exists.';
       if (req(e, d, 'Asset_Tag', 'Asset tag') && others.some(function (x) { return norm(x.Asset_Tag) === norm(d.Asset_Tag); })) e.Asset_Tag = 'Asset tag ' + d.Asset_Tag + ' is already used by another device.';
       if (has(d.Serial_Number) && others.some(function (x) { return norm(x.Serial_Number) === norm(d.Serial_Number); })) e.Serial_Number = 'Serial number ' + d.Serial_Number + ' is already registered.';
       req(e, d, 'Device_Type', 'Device type'); inList(e, d, 'Device_Type', 'Device type', lists['Device Types']);
       req(e, d, 'Brand', 'Brand');
-      req(e, d, 'Model', 'Model');
       req(e, d, 'Device_Ownership_Type', 'Ownership type'); inList(e, d, 'Device_Ownership_Type', 'Ownership type', lists['Ownership Types']);
-      req(e, d, 'Device_Condition', 'Condition'); inList(e, d, 'Device_Condition', 'Condition', lists['Device Conditions']);
+      inList(e, d, 'Device_Condition', 'Condition', lists['Device Conditions']);
       req(e, d, 'Current_Status', 'Status'); inList(e, d, 'Current_Status', 'Status', lists['Device Statuses']);
 
       if (d.Device_Ownership_Type === 'Rented') {
@@ -655,9 +654,9 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       const others = (ctx.employees || []).filter(function (x) { return x.Employee_ID !== ctx.editingId; });
       if (req(e, d, 'Employee_ID', 'Employee ID') && others.some(function (x) { return norm(x.Employee_ID) === norm(d.Employee_ID); })) e.Employee_ID = 'Employee ID ' + d.Employee_ID + ' already exists.';
       req(e, d, 'Employee_Name', 'Employee name');
-      if (req(e, d, 'Work_Email', 'Work email')) {
+      if (has(d.Work_Email)) { // optional; when given it must be a valid, unused address
         if (!EMAIL_RE.test(d.Work_Email.trim())) e.Work_Email = 'Enter a valid email address.';
-        else if (others.some(function (x) { return norm(x.Work_Email) === norm(d.Work_Email); })) e.Work_Email = 'Another employee already uses this email.';
+        else if (others.some(function (x) { return has(x.Work_Email) && norm(x.Work_Email) === norm(d.Work_Email); })) e.Work_Email = 'Another employee already uses this email.';
       }
       req(e, d, 'Department', 'Department');
       req(e, d, 'Designation', 'Designation');
@@ -1740,7 +1739,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     };
     overlay.addEventListener('mousedown', function (e) { api._down = e.target === overlay; });
     overlay.addEventListener('click', function (e) { if (e.target === overlay && api._down && !api.persistent) api.close(); });
-    overlay.querySelector('[data-modal-close]').addEventListener('click', function () { api.close(); });
+    overlay.querySelectorAll('[data-modal-close]').forEach(function (b) { b.addEventListener('click', function () { api.close(); }); }); // the header X and the footer Cancel button
     stack.push(api);
     document.body.classList.add('modal-open');
     setTimeout(function () {
@@ -2017,16 +2016,16 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     const body =
       (open ? tone('info', I('info', 16) + '<div>This device is allotted to <strong>' + E((ix().emp[open.Employee_ID] || {}).Employee_Name || open.Employee_ID) + '</strong>. Its status changes only through the return workflow.</div>') : '') +
       '<div class="form-grid">' +
-      UI.field({ name: 'Device_ID', label: 'Device ID', required: true, value: v.Device_ID, readonly: editing, hint: editing ? 'The ID cannot be changed.' : 'Generated automatically. Change only if you need a specific ID.' }) +
+      UI.field({ name: 'Device_ID', label: 'Device ID', value: v.Device_ID, readonly: editing, hint: editing ? 'The ID cannot be changed.' : 'Generated automatically. Change only if you need a specific ID.' }) +
       UI.field({ name: 'Asset_Tag', label: 'Asset Tag', required: true, value: v.Asset_Tag, placeholder: 'e.g. AT-LAP-020' }) +
       UI.field({ name: 'Device_Type', label: 'Device Type', type: 'select', required: true, value: v.Device_Type, options: lists['Device Types'], placeholder: 'Select type' }) +
       UI.field({ name: 'Brand', label: 'Brand', type: 'select', required: true, value: v.Brand, options: lists['Brands'], placeholder: 'Select brand' }) +
-      UI.field({ name: 'Model', label: 'Model', required: true, value: v.Model, placeholder: 'e.g. Latitude 5440' }) +
+      UI.field({ name: 'Model', label: 'Model', value: v.Model, placeholder: 'e.g. Latitude 5440' }) +
       UI.field({ name: 'Serial_Number', label: 'Serial Number', value: v.Serial_Number, hint: 'Optional, but must be unique when entered.' }) +
       '<div class="form-grid three span-2">' +
       UI.field({ name: 'Office', label: 'Office', type: 'select', required: !editing || !!(d && d.Office), value: v.Office, options: lists['Office'], placeholder: (editing && !(d && d.Office)) ? 'Unassigned (not set yet)' : 'Select office', hint: editing ? 'Moving a device only changes its current office. Past allotments and returns keep theirs.' : 'The office that holds this device.' }) +
       UI.field({ name: 'Device_Ownership_Type', label: 'Device Ownership Type', type: 'select', required: true, value: v.Device_Ownership_Type, options: lists['Ownership Types'], placeholder: false }) +
-      UI.field({ name: 'Device_Condition', label: 'Device Condition', type: 'select', required: true, value: v.Device_Condition, options: lists['Device Conditions'], placeholder: false }) +
+      UI.field({ name: 'Device_Condition', label: 'Device Condition', type: 'select', value: v.Device_Condition, options: lists['Device Conditions'], placeholder: 'Not specified' }) +
       UI.field({ name: 'Current_Status', label: 'Current Status', type: 'select', required: true, value: v.Current_Status, options: statusOpts, placeholder: false, disabled: !!open }) + '</div>' +
       '<div class="rental-group span-2' + (rented ? '' : ' is-hidden') + '"><div class="form-grid">' +
       UI.field({ name: 'Rental_Vendor', label: 'Rental Vendor', value: v.Rental_Vendor, required: true, placeholder: 'e.g. TechLease India' }) +
@@ -2074,7 +2073,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
     const body = '<div class="form-grid">' +
       UI.field({ name: 'Employee_ID', label: 'Employee ID', required: true, value: v.Employee_ID, readonly: editing, hint: editing ? 'The ID cannot be changed.' : 'Suggested next ID. Must be unique.' }) +
       UI.field({ name: 'Employee_Name', label: 'Employee Name', required: true, value: v.Employee_Name }) +
-      UI.field({ name: 'Work_Email', label: 'Work Email', type: 'email', required: true, value: v.Work_Email, placeholder: 'name' + MockData.EMAIL_DOMAIN }) +
+      UI.field({ name: 'Work_Email', label: 'Work Email', type: 'email', value: v.Work_Email, placeholder: 'name' + MockData.EMAIL_DOMAIN }) +
       UI.field({ name: 'Department', label: 'Department', type: 'select', required: true, value: v.Department, options: lists['Departments'], placeholder: 'Select department' }) +
       UI.field({ name: 'Designation', label: 'Designation', type: 'select', required: true, value: v.Designation, options: lists['Designations'], placeholder: 'Select designation' }) +
       UI.field({ name: 'Office', label: 'Office', type: 'select', required: !editing || !!(e && e.Office), value: v.Office, options: lists['Office'], placeholder: (editing && !(e && e.Office)) ? 'Unassigned (not set yet)' : 'Select office' }) +
@@ -2147,8 +2146,8 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
         const syncOff = function (d) { off.value = d && d.Office ? d.Office : ''; off.disabled = !!(d && d.Office); };
         syncOff(null);
         es.addEventListener('change', function () { api.el.querySelector('#emp-info').innerHTML = empInfo(idx.emp[es.value]); });
-        ds.addEventListener('change', function () { const d = idx.dev[ds.value]; api.el.querySelector('#dev-info').innerHTML = devInfo(d); if (d) cond.value = d.Device_Condition; syncOff(d); });
-        if (preset.deviceId) { const d = idx.dev[preset.deviceId]; if (d) cond.value = d.Device_Condition; syncOff(d); }
+        ds.addEventListener('change', function () { const d = idx.dev[ds.value]; api.el.querySelector('#dev-info').innerHTML = devInfo(d); if (d && d.Device_Condition) cond.value = d.Device_Condition; syncOff(d); });
+        if (preset.deviceId) { const d = idx.dev[preset.deviceId]; if (d && d.Device_Condition) cond.value = d.Device_Condition; syncOff(d); }
       }
     });
   }
@@ -2175,7 +2174,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       (a0 ? '<input type="hidden" name="Assignment_ID" value="' + E(asgId) + '">' : '<div class="form-grid one">' + UI.field({ name: 'Assignment_ID', label: 'Assignment', type: 'select', required: true, options: list.map(function (a) { return { value: a.Assignment_ID, label: asgLabel(a) }; }), placeholder: 'Select an active assignment' }) + '</div>') +
       '<div class="info-panel" id="asg-info">' + returnInfo(a0) + '</div><div class="form-grid">' +
       UI.field({ name: 'Return_Date', label: 'Actual Return Date', type: 'date', required: true, value: today(), max: today(), hint: 'Defaults to today. Correct it if the device came back earlier.' }) +
-      UI.field({ name: 'Condition_At_Return', label: 'Condition at Return', type: 'select', required: true, value: dev0 ? dev0.Device_Condition : 'Good', options: conds, placeholder: false }) +
+      UI.field({ name: 'Condition_At_Return', label: 'Condition at Return', type: 'select', required: true, value: dev0 && dev0.Device_Condition ? dev0.Device_Condition : 'Good', options: conds, placeholder: false }) +
       '<div class="span-2 cond-note" id="cond-note"></div>' +
       UI.field({ name: 'Device_Status_After', label: 'Device status after return', type: 'select', value: 'Available', options: ['Available', 'Under Repair'], placeholder: false, hidden: true, hint: 'Fair condition: choose Under Repair if it is not usable as is.' }) +
       UI.field({ name: 'Accessories_Returned', label: 'Accessories Returned', placeholder: 'Optional, e.g. Charger, laptop bag' }) +
@@ -2202,7 +2201,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
           after.classList.toggle('is-hidden', !fair);
           note.innerHTML = c === 'Damaged' ? tone('warn', I('alert', 16) + '<div>Damaged devices are set to <strong>Under Repair</strong> and cannot be allotted until you change their status in Device Inventory.</div>') : (c === 'New' || c === 'Good' ? '<p class="hint">The device will become <strong>Available</strong>.</p>' : '');
         };
-        const syncAsg = function () { const a = idx.asg[s.value]; api.el.querySelector('#asg-info').innerHTML = returnInfo(a); if (a && s.type !== 'hidden') { const dv = idx.dev[a.Device_ID]; if (dv) cond.value = dv.Device_Condition; syncCond(); } };
+        const syncAsg = function () { const a = idx.asg[s.value]; api.el.querySelector('#asg-info').innerHTML = returnInfo(a); if (a && s.type !== 'hidden') { const dv = idx.dev[a.Device_ID]; if (dv && dv.Device_Condition) cond.value = dv.Device_Condition; syncCond(); } };
         cond.addEventListener('change', syncCond); syncCond();
         if (s.tagName === 'SELECT') s.addEventListener('change', syncAsg);
       }
