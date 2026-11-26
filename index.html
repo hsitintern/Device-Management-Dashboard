@@ -660,7 +660,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       }
       req(e, d, 'Department', 'Department');
       req(e, d, 'Designation', 'Designation');
-      const jd = dateField(e, d, 'Joining_Date', 'Joining date', true);
+      const jd = dateField(e, d, 'Joining_Date', 'Joining date', false);
       req(e, d, 'Employment_Status', 'Employment status'); inList(e, d, 'Employment_Status', 'Employment status', lists['Employment Statuses']);
       const needsLwd = d.Employment_Status === 'Notice Period' || d.Employment_Status === 'Exited';
       const lw = dateField(e, d, 'Last_Working_Date', 'Last working date', needsLwd);
@@ -2078,7 +2078,7 @@ details.card > summary { list-style: none; } details.card > summary::-webkit-det
       UI.field({ name: 'Designation', label: 'Designation', type: 'select', required: true, value: v.Designation, options: lists['Designations'], placeholder: 'Select designation' }) +
       UI.field({ name: 'Office', label: 'Office', type: 'select', required: !editing || !!(e && e.Office), value: v.Office, options: lists['Office'], placeholder: (editing && !(e && e.Office)) ? 'Unassigned (not set yet)' : 'Select office' }) +
       UI.field({ name: 'Manager_Name', label: 'Manager Name', value: v.Manager_Name }) +
-      UI.field({ name: 'Joining_Date', label: 'Joining Date', type: 'date', required: true, value: v.Joining_Date }) +
+      UI.field({ name: 'Joining_Date', label: 'Joining Date', type: 'date', value: v.Joining_Date }) +
       UI.field({ name: 'Employment_Status', label: 'Employment Status', type: 'select', required: true, value: v.Employment_Status, options: lists['Employment Statuses'], placeholder: false }) +
       UI.field({ name: 'Last_Working_Date', label: 'Last Working Date', type: 'date', required: true, value: v.Last_Working_Date, hidden: !showLwd, hint: 'Required for Notice Period and Exited.' }) +
       UI.field({ name: 'Notes', label: 'Notes', type: 'textarea', value: v.Notes, span: 'full' }) + '</div>';
